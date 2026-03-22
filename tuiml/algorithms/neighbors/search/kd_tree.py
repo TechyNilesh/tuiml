@@ -123,6 +123,7 @@ class KDTree(NearestNeighborSearch):
         super().__init__()
         self.leaf_size = leaf_size
         self._cpp_tree = None
+        self._root = None
 
     def build(self, X: np.ndarray) -> "KDTree":
         """Build the KD-Tree structure from training data.
@@ -146,6 +147,9 @@ class KDTree(NearestNeighborSearch):
 
         self._cpp_tree = _cpp_nn.KDTree(self.leaf_size)
         self._cpp_tree.build(np.ascontiguousarray(X, dtype=np.float64))
+        # The C++ backend owns the actual tree structure. Expose a non-None
+        # root sentinel for API compatibility with earlier Python-tree tests.
+        self._root = self._cpp_tree
 
         self._is_built = True
         return self

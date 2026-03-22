@@ -65,6 +65,32 @@ class WorkflowResult:
     def __repr__(self):
         return f"WorkflowResult(metrics={self.metrics})"
 
+    def _transform_for_inference(self, X):
+        """Apply any fitted preprocessing/feature-selection pipeline."""
+        X_transformed = np.asarray(X)
+        pipeline = self.preprocessing_pipeline
+        if not pipeline:
+            return X_transformed
+
+        steps = pipeline.get('preprocessing_steps', []) if isinstance(pipeline, dict) else pipeline
+        selector = pipeline.get('feature_selector') if isinstance(pipeline, dict) else None
+
+        for step in steps:
+            if hasattr(step, 'fit_resample'):
+                # Resamplers are training-only; applying them at inference would
+                # change the number of rows and break prediction semantics.
+                continue
+            transformed = step.transform(X_transformed)
+            if isinstance(transformed, tuple):
+                X_transformed = transformed[0]
+            else:
+                X_transformed = transformed
+
+        if selector is not None:
+            X_transformed = selector.transform(X_transformed)
+
+        return X_transformed
+
     def predict(self, X) -> np.ndarray:
         """Make predictions using the trained model.
 
@@ -85,7 +111,8 @@ class WorkflowResult:
         """
         if self.model is None:
             raise RuntimeError("No trained model available. Run the workflow first.")
-        return self.model.predict(X)
+        X_transformed = self._transform_for_inference(X)
+        return self.model.predict(X_transformed)
 
     def predict_proba(self, X) -> np.ndarray:
         """Predict class probabilities using the trained model.
@@ -113,7 +140,8 @@ class WorkflowResult:
             raise AttributeError(
                 f"{self.model.__class__.__name__} does not support predict_proba()."
             )
-        return self.model.predict_proba(X)
+        X_transformed = self._transform_for_inference(X)
+        return self.model.predict_proba(X_transformed)
 
     def save(self, path: str) -> None:
         """Save the entire workflow result (model + metrics + metadata) to disk.
@@ -706,6 +734,117 @@ class Workflow:
 
         return None
 
+    @staticmethod
+    def _normalize_step_config(step):
+        """Normalize a preprocessing step config into name + params."""
+        if isinstance(step, str):
+            return step, {}
+        if isinstance(step, dict):
+            name = step.get('name')
+            params = {k: v for k, v in step.items() if k not in ('name', 'params')}
+            params.update(step.get('params', {}))
+            return name, params
+        return None, {}
+
+    def _fit_preprocessing_pipeline(self, X, y=None):
+        """Fit preprocessing steps on the provided data only."""
+        X_current, y_current = X, y
+        fitted_steps = []
+
+        for step in self._preprocessing_steps:
+            name, params = self._normalize_step_config(step)
+            if not name:
+                continue
+
+            preprocessor_cls = self._resolve_component(name, 'preprocessing')
+            if preprocessor_cls is None:
+                raise ValueError(
+                    f"Preprocessor '{name}' not found. Check the class name "
+                    f"or ensure it is registered in the hub."
+                )
+
+            preprocessor = preprocessor_cls(**params)
+            if hasattr(preprocessor, 'fit_resample') and y_current is not None:
+                X_current, y_current = preprocessor.fit_resample(X_current, y_current)
+            else:
+                transformed = preprocessor.fit_transform(X_current, y_current)
+                if isinstance(transformed, tuple):
+                    X_current, y_current = transformed
+                else:
+                    X_current = transformed
+            fitted_steps.append(preprocessor)
+
+        return X_current, y_current, fitted_steps
+
+    @staticmethod
+    def _transform_with_preprocessing_pipeline(X, fitted_steps):
+        """Transform inference/validation data with already-fitted steps."""
+        X_current = X
+
+        for step in fitted_steps:
+            if hasattr(step, 'fit_resample'):
+                continue
+            transformed = step.transform(X_current)
+            if isinstance(transformed, tuple):
+                X_current = transformed[0]
+            else:
+                X_current = transformed
+
+        return X_current
+
+    def _fit_feature_selector(self, X, y=None):
+        """Fit feature selection on the provided data only."""
+        if not self._feature_selection:
+            return X, None
+
+        fs_name = self._feature_selection.get('name')
+        fs_params = {
+            k: v for k, v in self._feature_selection.items() if k != 'name'
+        }
+        selector_cls = self._resolve_component(fs_name, 'features')
+        if selector_cls is None:
+            raise ValueError(
+                f"Feature selector '{fs_name}' not found. Check the class "
+                f"name or ensure it is registered in the hub."
+            )
+
+        selector = selector_cls(**fs_params)
+        if hasattr(selector, 'fit_transform'):
+            X_selected = selector.fit_transform(X, y)
+        else:
+            selector.fit(X, y)
+            X_selected = selector.transform(X)
+
+        return X_selected, selector
+
+    @staticmethod
+    def _transform_with_feature_selector(X, selector):
+        """Transform data with an already-fitted feature selector."""
+        if selector is None:
+            return X
+        return selector.transform(X)
+
+    def _fit_pipeline(self, X, y=None):
+        """Fit preprocessing + feature selection on a dataset split."""
+        X_processed, y_processed, fitted_steps = self._fit_preprocessing_pipeline(X, y)
+        X_processed, selector = self._fit_feature_selector(X_processed, y_processed)
+        pipeline = {
+            'preprocessing_steps': fitted_steps,
+            'feature_selector': selector,
+        }
+        return X_processed, y_processed, pipeline
+
+    def _transform_pipeline(self, X, pipeline):
+        """Apply a fitted pipeline to validation/test/inference data."""
+        if not pipeline:
+            return X
+        X_processed = self._transform_with_preprocessing_pipeline(
+            X, pipeline.get('preprocessing_steps', [])
+        )
+        return self._transform_with_feature_selector(
+            X_processed, pipeline.get('feature_selector')
+        )
+
     def _execute(self) -> WorkflowResult:
         """Internal execution method - performs actual training."""
         import numpy as np
@@ -749,53 +888,6 @@ class Workflow:
             # ndarray or array-like
             X = self._data if isinstance(self._data, np.ndarray) else np.asarray(self._data)
             y = np.asarray(self._target) if self._target is not None else None
-
-        # 2. Apply preprocessing
-        if self._preprocessing_steps:
-            for step in self._preprocessing_steps:
-                if isinstance(step, str):
-                    name, params = step, {}
-                elif isinstance(step, dict):
-                    name = step.get('name')
-                    params = {k: v for k, v in step.items() if k not in ('name', 'params')}
-                    params.update(step.get('params', {}))
-                else:
-                    continue
-
-                preprocessor_cls = self._resolve_component(
-                    name, 'preprocessing'
-                )
-                if preprocessor_cls is None:
-                    raise ValueError(
-                        f"Preprocessor '{name}' not found. Check the class name "
-                        f"or ensure it is registered in the hub."
-                    )
-                preprocessor = preprocessor_cls(**params)
-                if hasattr(preprocessor, 'fit_resample') and y is not None:
-                    X, y = preprocessor.fit_resample(X, y)
-                else:
-                    X = preprocessor.fit_transform(X)
-
-        # 2b. Apply feature selection
-        if self._feature_selection:
-            fs_name = self._feature_selection.get('name')
-            fs_params = {
-                k: v for k, v in self._feature_selection.items() if k != 'name'
-            }
-            selector_cls = self._resolve_component(
-                fs_name, 'features'
-            )
-            if selector_cls is None:
-                raise ValueError(
-                    f"Feature selector '{fs_name}' not found. Check the class "
-                    f"name or ensure it is registered in the hub."
-                )
-            selector = selector_cls(**fs_params)
-            if hasattr(selector, 'fit_transform'):
-                X = selector.fit_transform(X, y)
-            else:
-                selector.fit(X, y)
-                X = selector.transform(X)
 
         # 3. Determine split config (merge evaluate's test_size if split not configured)
         from tuiml.evaluation.splitting import train_test_split
@@ -873,20 +965,22 @@ class Workflow:
         metrics = {}
         cv_results = None
         y_pred = None
+        preprocessing_pipeline = None
 
         if is_clustering:
             # ---- Clustering path ----
             # Clusterers use fit(X) only; metrics take (X, labels)
+            X_model, _, preprocessing_pipeline = self._fit_pipeline(X, y)
             model = model_cls(**model_params)
-            model.fit(X)
-            labels = model.predict(X) if hasattr(model, 'predict') else model.labels_
+            model.fit(X_model)
+            labels = model.predict(X_model) if hasattr(model, 'predict') else model.labels_
 
             # Clustering metrics: silhouette_score(X, labels), etc.
             for metric_name in requested_metrics:
                 metric_func = _get_metric_func(metric_name)
                 if metric_func is not None:
                     try:
-                        metrics[metric_name] = float(metric_func(X, labels))
+                        metrics[metric_name] = float(metric_func(X_model, labels))
                     except Exception as e:
                         metrics[f'{metric_name}_error'] = str(e)
 
@@ -895,9 +989,10 @@ class Workflow:
             # Anomaly detectors use fit(X) only (unsupervised).
             # predict(X) returns -1 (anomaly) / 1 (normal).
             # No train/test split — fit on all data and score it.
+            X_model, _, preprocessing_pipeline = self._fit_pipeline(X, y)
             model = model_cls(**model_params)
-            model.fit(X)
-            predictions = model.predict(X)
+            model.fit(X_model)
+            predictions = model.predict(X_model)
 
             result_info = {
                 'n_anomalies': int((predictions == -1).sum()),
@@ -907,7 +1002,7 @@ class Workflow:
 
             # If decision_function is available, add score stats
             if hasattr(model, 'decision_function'):
-                scores = model.decision_function(X)
+                scores = model.decision_function(X_model)
                 result_info['score_mean'] = float(np.mean(scores))
                 result_info['score_std'] = float(np.std(scores))
 
@@ -967,6 +1062,9 @@ class Workflow:
                 X_tr, X_val = X[train_idx], X[val_idx]
                 y_tr, y_val = y[train_idx], y[val_idx]
 
+                X_tr, y_tr, fold_pipeline = self._fit_pipeline(X_tr, y_tr)
+                X_val = self._transform_pipeline(X_val, fold_pipeline)
+
                 fold_model = model_cls(**model_params)
                 fold_model.fit(X_tr, y_tr)
                 fold_pred = fold_model.predict(X_val)
@@ -987,14 +1085,18 @@ class Workflow:
             cv_results = {'scores': cv_scores}
 
             # Train final model on ALL data so the returned model is maximally useful
+            X_final, y_final, preprocessing_pipeline = self._fit_pipeline(X, y)
             model = model_cls(**model_params)
-            model.fit(X, y)
+            model.fit(X_final, y_final)
         else:
             # ---- Holdout path ----
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=test_size, random_state=random_state,
                 stratify=stratify_arr,
             )
+
+            X_train, y_train, holdout_pipeline = self._fit_pipeline(X_train, y_train)
+            X_test = self._transform_pipeline(X_test, holdout_pipeline)
 
             model = model_cls(**model_params)
             model.fit(X_train, y_train)
@@ -1008,12 +1110,17 @@ class Workflow:
                     except Exception as e:
                         metrics[f'{metric_name}_error'] = str(e)
 
+            X_final, y_final, preprocessing_pipeline = self._fit_pipeline(X, y)
+            model = model_cls(**model_params)
+            model.fit(X_final, y_final)
+
         # 5. Return results
         return WorkflowResult(
             model=model,
             metrics=metrics,
             predictions=y_pred,
             cv_results=cv_results,
+            preprocessing_pipeline=preprocessing_pipeline,
             metadata={
                 'algorithm': self._model,
                 'preprocessing': self._preprocessing_steps,

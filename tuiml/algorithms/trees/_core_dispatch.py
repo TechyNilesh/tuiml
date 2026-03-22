@@ -20,6 +20,11 @@ from tuiml._cpp_ext import tree as _cpp_tree
 from ._core.nodes import TreeNode
 
 
+def has_cpp_backend() -> bool:
+    """Return whether the compiled tree backend is available."""
+    return _cpp_tree is not None
+
+
 # ── Splitter wrappers ──────────────────────────────────────────────────
 
 def best_split_classifier(

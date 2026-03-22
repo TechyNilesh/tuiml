@@ -28,6 +28,38 @@ class _FakeModelNoProba:
         return np.zeros(len(X))
 
 
+class _TrackingPreprocessor:
+    """Training-time preprocessor used to verify split-scoped fitting."""
+
+    fit_sizes = []
+
+    def fit(self, X, y=None):
+        self.__class__.fit_sizes.append(len(X))
+        self.offset_ = np.mean(X, axis=0)
+        return self
+
+    def transform(self, X):
+        return np.asarray(X) - self.offset_
+
+    def fit_transform(self, X, y=None):
+        return self.fit(X, y).transform(X)
+
+
+class _TrackingModel:
+    """Minimal classifier that records inputs it receives."""
+
+    fit_sizes = []
+
+    def fit(self, X, y):
+        self.__class__.fit_sizes.append(len(X))
+        self.last_predict_input_ = None
+        return self
+
+    def predict(self, X):
+        self.last_predict_input_ = np.asarray(X)
+        return np.zeros(len(X), dtype=int)
+
+
 def _make_classification_data(n_samples=100, n_features=4, seed=42):
     """Create a simple binary classification dataset."""
     rng = np.random.RandomState(seed)
@@ -468,3 +500,86 @@ class TestWorkflowRun:
 
         assert isinstance(result, WorkflowResult)
         assert result.model is not None
+
+    def test_cross_validate_fits_preprocessing_per_fold(self, monkeypatch):
+        """Preprocessing should fit on each train fold, not once on all data."""
+        from tuiml.hub import registry
+
+        X, y = _make_classification_data(n_samples=12, n_features=4, seed=1)
+        _TrackingPreprocessor.fit_sizes = []
+        _TrackingModel.fit_sizes = []
+
+        def fake_resolve(name, fallback_module=None):
+            if name == "TrackingScaler":
+                return _TrackingPreprocessor
+            return None
+
+        def fake_get(name):
+            if name == "TrackingModel":
+                return _TrackingModel
+            raise KeyError(name)
+
+        def fake_get_info(name):
+            if name == "TrackingModel":
+                return {"type": "classifier", "tags": []}
+            raise KeyError(name)
+
+        monkeypatch.setattr(Workflow, "_resolve_component", staticmethod(fake_resolve))
+        monkeypatch.setattr(registry, "get", fake_get)
+        monkeypatch.setattr(registry, "get_info", fake_get_info)
+
+        result = (
+            Workflow(X, target=y)
+            .preprocess("TrackingScaler")
+            .train("TrackingModel")
+            .cross_validate(cv=3)
+            .run()
+        )
+
+        assert isinstance(result, WorkflowResult)
+        assert sorted(_TrackingPreprocessor.fit_sizes) == [8, 8, 8, 12]
+        assert sorted(_TrackingModel.fit_sizes) == [8, 8, 8, 12]
+
+    def test_result_predict_applies_fitted_pipeline(self, monkeypatch):
+        """WorkflowResult.predict should apply fitted preprocessing before inference."""
+        from tuiml.hub import registry
+
+        X, y = _make_classification_data(n_samples=20, n_features=4, seed=2)
+        _TrackingPreprocessor.fit_sizes = []
+        _TrackingModel.fit_sizes = []
+
+        def fake_resolve(name, fallback_module=None):
+            if name == "TrackingScaler":
+                return _TrackingPreprocessor
+            return None
+
+        def fake_get(name):
+            if name == "TrackingModel":
+                return _TrackingModel
+            raise KeyError(name)
+
+        def fake_get_info(name):
+            if name == "TrackingModel":
+                return {"type": "classifier", "tags": []}
+            raise KeyError(name)
+
+        monkeypatch.setattr(Workflow, "_resolve_component", staticmethod(fake_resolve))
+        monkeypatch.setattr(registry, "get", fake_get)
+        monkeypatch.setattr(registry, "get_info", fake_get_info)
+
+        result = (
+            Workflow(X, target=y)
+            .preprocess("TrackingScaler")
+            .train("TrackingModel")
+            .evaluate()
+            .run()
+        )
+
+        X_new = np.array([[10.0, 20.0, 30.0, 40.0]])
+        preds = result.predict(X_new)
+
+        assert preds.shape == (1,)
+        np.testing.assert_allclose(
+            result.model.last_predict_input_,
+            X_new - np.mean(X, axis=0),
+        )

@@ -26,4 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Model serialization via joblib with save/load utilities.
 - Cross-validation, grid search, and hyperparameter tuning support.
 
-[0.1.1]: https://github.com/tuiml/tuiml/releases/tag/v0.1.1
+[0.1.1]: https://github.com/TechyNilesh/tuiml/releases/tag/v0.1.1

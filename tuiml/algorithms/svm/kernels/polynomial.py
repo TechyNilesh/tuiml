@@ -201,11 +201,9 @@ class PolynomialKernel(CachedKernel):
             The kernel (Gram) matrix.
         """
         self._check_is_built()
-        from tuiml.base.kernels import _xnp
-        xnp = _xnp()
-        X = xnp.asarray(self.X_, dtype=float)
+        X = np.asarray(self.X_, dtype=float)
         K = (self.gamma * (X @ X.T) + self.coef0) ** self.degree
-        return np.asarray(K)
+        return K
 
     def compute_matrix_cross(self, X1: np.ndarray, X2: np.ndarray) -> np.ndarray:
         """Compute the polynomial kernel matrix between two sample sets.
@@ -222,12 +220,10 @@ class PolynomialKernel(CachedKernel):
         K : np.ndarray of shape (n1, n2)
             Kernel matrix.
         """
-        from tuiml.base.kernels import _xnp
-        xnp = _xnp()
-        X1 = xnp.asarray(X1, dtype=float)
-        X2 = xnp.asarray(X2, dtype=float)
+        X1 = np.asarray(X1, dtype=float)
+        X2 = np.asarray(X2, dtype=float)
         K = (self.gamma * (X1 @ X2.T) + self.coef0) ** self.degree
-        return np.asarray(K)
+        return K
 
     def __repr__(self) -> str:
         """String representation."""
