@@ -190,3 +190,13 @@ BSD 3-Clause License. See [LICENSE](LICENSE) for details.
 - [GitHub](https://github.com/TechyNilesh/TuiML)
 - [PyPI](https://pypi.org/project/tuiml)
 - [Changelog](https://tuiml.ai/docs/changelog.html)
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=TechyNilesh%2Ftuiml&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=TechyNilesh/tuiml&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=TechyNilesh/tuiml&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=TechyNilesh/tuiml&type=date&legend=top-left" />
+ </picture>
+</a>
