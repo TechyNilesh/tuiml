@@ -12,7 +12,7 @@ TuiML is a complete ML ecosystem for building algorithms, training models, runni
   <a href="https://pypi.org/project/tuiml/"><img src="https://img.shields.io/pypi/pyversions/tuiml?style=for-the-badge" alt="Python versions"></a>&nbsp;
   <a href="https://tuiml.ai/docs/getting_started.html"><img src="https://img.shields.io/badge/Docs-tuiml.ai-blue?style=for-the-badge" alt="Documentation"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause-blue.svg?style=for-the-badge" alt="BSD-3-Clause License"></a>&nbsp;
-  <a href="https://pepy.tech/projects/tuiml"><img src="https://static.pepy.tech/badge/tuiml?style=for-the-badge" alt="Downloads"></a>
+  <a href="https://pepy.tech/projects/tuiml"><img src="https://img.shields.io/pepy/dt/tuiml?style=for-the-badge" alt="Downloads"></a>
 </p>
 
 ## Three Pillars
