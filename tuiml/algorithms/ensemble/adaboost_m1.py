@@ -56,7 +56,7 @@ class AdaBoostClassifier(Classifier):
         The base classifier to use as weak learner. Typically a simple
         classifier such as a decision stump.
 
-    n_estimators : int, default=10
+    n_estimators : int, default=50
         The maximum number of estimators at which boosting is terminated.
         More estimators can improve accuracy but may lead to overfitting.
 
@@ -136,7 +136,7 @@ class AdaBoostClassifier(Classifier):
     """
 
     def __init__(self, base_classifier: Any = 'DecisionStumpClassifier',
-                 n_estimators: int = 10,
+                 n_estimators: int = 50,
                  weight_threshold: float = 100,
                  random_state: Optional[int] = None):
         """Initialize AdaBoostClassifier.
@@ -145,7 +145,7 @@ class AdaBoostClassifier(Classifier):
         ----------
         base_classifier : str or class, default='DecisionStumpClassifier'
             The base classifier to use as weak learner.
-        n_estimators : int, default=10
+        n_estimators : int, default=50
             Maximum number of boosting iterations.
         weight_threshold : float, default=100
             Weight ratio threshold for triggering resampling.
@@ -167,7 +167,7 @@ class AdaBoostClassifier(Classifier):
         return {
             "base_classifier": {"type": "string", "default": "DecisionStump",
                                "description": "Base classifier name"},
-            "n_estimators": {"type": "integer", "default": 10, "minimum": 1,
+            "n_estimators": {"type": "integer", "default": 50, "minimum": 1,
                             "description": "Number of boosting iterations"},
             "weight_threshold": {"type": "number", "default": 100, "minimum": 1,
                                 "description": "Weight threshold for resampling"},
@@ -545,7 +545,7 @@ class AdaBoostRegressor(Regressor):
         return {
             "base_regressor": {"type": "string", "default": "AdditiveRegression",
                               "description": "Base regressor name"},
-            "n_estimators": {"type": "integer", "default": 10, "minimum": 1,
+            "n_estimators": {"type": "integer", "default": 50, "minimum": 1,
                             "description": "Number of boosting iterations"},
             "random_state": {"type": "integer", "default": None,
                             "description": "Random seed"}

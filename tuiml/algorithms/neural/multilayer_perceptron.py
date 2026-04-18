@@ -64,12 +64,12 @@ class MultilayerPerceptronClassifier(Classifier):
 
     Parameters
     ----------
-    hidden_layers : list of int, default=[10]
+    hidden_layers : list of int, default=[100]
         Sizes of the hidden layers. Each entry in the list represents
         the number of neurons in that hidden layer.
-    learning_rate : float, default=0.3
+    learning_rate : float, default=0.1
         Learning rate for weight updates.
-    momentum : float, default=0.2
+    momentum : float, default=0.9
         Momentum for gradient descent to accelerate convergence and
         avoid local minima.
     max_epochs : int, default=500
@@ -77,9 +77,9 @@ class MultilayerPerceptronClassifier(Classifier):
     validation_threshold : int, default=20
         Number of epochs to wait for improvement in loss before
         stopping (patience).
-    decay : bool, default=False
+    decay : bool, default=True
         Whether to decay the learning rate over time.
-    activation : {'sigmoid', 'relu'}, default='sigmoid'
+    activation : {'sigmoid', 'relu'}, default='relu'
         Activation function for hidden layers.
     random_state : int or None, default=None
         Seed for the random number generator.
@@ -144,15 +144,15 @@ class MultilayerPerceptronClassifier(Classifier):
     """
 
     def __init__(self, hidden_layers: List[int] = None,
-                 learning_rate: float = 0.3,
-                 momentum: float = 0.2,
+                 learning_rate: float = 0.1,
+                 momentum: float = 0.9,
                  max_epochs: int = 500,
                  validation_threshold: int = 20,
-                 decay: bool = False,
-                 activation: str = 'sigmoid',
+                 decay: bool = True,
+                 activation: str = 'relu',
                  random_state: Optional[int] = None):
         super().__init__()
-        self.hidden_layers = hidden_layers or [10]
+        self.hidden_layers = hidden_layers or [100]
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.max_epochs = max_epochs
@@ -169,19 +169,19 @@ class MultilayerPerceptronClassifier(Classifier):
     @classmethod
     def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         return {
-            "hidden_layers": {"type": "array", "default": [10],
+            "hidden_layers": {"type": "array", "default": [100],
                              "description": "Sizes of hidden layers"},
-            "learning_rate": {"type": "number", "default": 0.3,
+            "learning_rate": {"type": "number", "default": 0.1,
                              "minimum": 0, "description": "Learning rate"},
-            "momentum": {"type": "number", "default": 0.2,
+            "momentum": {"type": "number", "default": 0.9,
                         "minimum": 0, "maximum": 1, "description": "Momentum"},
             "max_epochs": {"type": "integer", "default": 500, "minimum": 1,
                           "description": "Maximum training epochs"},
             "validation_threshold": {"type": "integer", "default": 20,
                                     "description": "Early stopping patience"},
-            "decay": {"type": "boolean", "default": False,
+            "decay": {"type": "boolean", "default": True,
                      "description": "Decay learning rate"},
-            "activation": {"type": "string", "default": "sigmoid",
+            "activation": {"type": "string", "default": "relu",
                           "enum": ["sigmoid", "relu"],
                           "description": "Activation function"}
         }
@@ -625,21 +625,21 @@ class MultilayerPerceptronRegressor(Regressor):
 
     Parameters
     ----------
-    hidden_layers : list of int, default=[10]
+    hidden_layers : list of int, default=[100]
         Sizes of the hidden layers. Each entry represents the number of
         neurons in that hidden layer.
-    learning_rate : float, default=0.3
+    learning_rate : float, default=0.1
         Learning rate for weight updates.
-    momentum : float, default=0.2
+    momentum : float, default=0.9
         Momentum for gradient descent to accelerate convergence.
     max_epochs : int, default=500
         Maximum number of training epochs.
     validation_threshold : int, default=20
         Number of epochs to wait for improvement in loss before
         stopping (patience).
-    decay : bool, default=False
+    decay : bool, default=True
         Whether to decay the learning rate over time.
-    activation : {'sigmoid', 'relu'}, default='sigmoid'
+    activation : {'sigmoid', 'relu'}, default='relu'
         Activation function for hidden layers.
     random_state : int or None, default=None
         Seed for the random number generator.
@@ -692,36 +692,36 @@ class MultilayerPerceptronRegressor(Regressor):
     """
 
     def __init__(self, hidden_layers: List[int] = None,
-                 learning_rate: float = 0.3,
-                 momentum: float = 0.2,
+                 learning_rate: float = 0.1,
+                 momentum: float = 0.9,
                  max_epochs: int = 500,
                  validation_threshold: int = 20,
-                 decay: bool = False,
-                 activation: str = 'sigmoid',
+                 decay: bool = True,
+                 activation: str = 'relu',
                  random_state: Optional[int] = None):
         """Initialize MultilayerPerceptronRegressor.
 
         Parameters
         ----------
-        hidden_layers : list of int, default=[10]
+        hidden_layers : list of int, default=[100]
             Sizes of the hidden layers.
-        learning_rate : float, default=0.3
+        learning_rate : float, default=0.01
             Learning rate for weight updates.
-        momentum : float, default=0.2
+        momentum : float, default=0.9
             Momentum for gradient descent.
         max_epochs : int, default=500
             Maximum number of training epochs.
         validation_threshold : int, default=20
             Early stopping patience.
-        decay : bool, default=False
+        decay : bool, default=True
             Whether to decay the learning rate.
-        activation : str, default='sigmoid'
+        activation : str, default='relu'
             Activation function for hidden layers.
         random_state : int or None, default=None
             Random seed.
         """
         super().__init__()
-        self.hidden_layers = hidden_layers or [10]
+        self.hidden_layers = hidden_layers or [100]
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.max_epochs = max_epochs
@@ -742,19 +742,19 @@ class MultilayerPerceptronRegressor(Regressor):
     def get_parameter_schema(cls) -> Dict[str, Dict[str, Any]]:
         """Return parameter schema."""
         return {
-            "hidden_layers": {"type": "array", "default": [10],
+            "hidden_layers": {"type": "array", "default": [100],
                              "description": "Sizes of hidden layers"},
-            "learning_rate": {"type": "number", "default": 0.3,
+            "learning_rate": {"type": "number", "default": 0.1,
                              "minimum": 0, "description": "Learning rate"},
-            "momentum": {"type": "number", "default": 0.2,
+            "momentum": {"type": "number", "default": 0.9,
                         "minimum": 0, "maximum": 1, "description": "Momentum"},
             "max_epochs": {"type": "integer", "default": 500, "minimum": 1,
                           "description": "Maximum training epochs"},
             "validation_threshold": {"type": "integer", "default": 20,
                                     "description": "Early stopping patience"},
-            "decay": {"type": "boolean", "default": False,
+            "decay": {"type": "boolean", "default": True,
                      "description": "Decay learning rate"},
-            "activation": {"type": "string", "default": "sigmoid",
+            "activation": {"type": "string", "default": "relu",
                           "enum": ["sigmoid", "relu"],
                           "description": "Activation function"}
         }

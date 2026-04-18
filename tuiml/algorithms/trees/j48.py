@@ -11,8 +11,11 @@ from ._core import (
     gain_ratio_score,
     pessimistic_prune,
     predict_single_numpy,
+    build_classifier_tree,
     build_regressor_tree,
     reduced_error_prune_regressor,
+    flatten_tree,
+    predict_batch,
     TreeConfig,
 )
 
@@ -248,6 +251,10 @@ class C45TreeClassifier(Classifier):
                                   n_classes: int) -> Tuple[float, float]:
         """Find best threshold for a numeric attribute using gain ratio.
 
+        Uses vectorized cumulative class-count computation to evaluate all
+        candidate thresholds in a single pass with NumPy operations,
+        avoiding per-threshold Python loops.
+
         Parameters
         ----------
         X_col : np.ndarray
@@ -264,38 +271,73 @@ class C45TreeClassifier(Classifier):
         best_gain_ratio : float
             Gain ratio achieved at the optimal threshold.
         """
+        n = len(y)
         sorted_indices = np.argsort(X_col)
         sorted_values = X_col[sorted_indices]
         sorted_y = y[sorted_indices]
 
+        # Build a one-hot matrix (n, n_classes) and cumsum to get
+        # left_counts[i] = class counts for sorted_y[:i+1]
+        onehot = np.zeros((n, n_classes), dtype=np.int64)
+        onehot[np.arange(n), sorted_y] = 1
+        cum_counts = np.cumsum(onehot, axis=0)  # (n, n_classes)
+
+        total_counts = cum_counts[-1]  # total class counts
+
+        # Valid split positions: where value changes and min_samples_leaf met
+        # Split after index i means left = [:i+1], right = [i+1:]
+        value_changes = sorted_values[:-1] != sorted_values[1:]  # (n-1,)
+        n_left_arr = np.arange(1, n)  # sizes 1..n-1
+        n_right_arr = n - n_left_arr
+        leaf_ok = ((n_left_arr >= self.min_samples_leaf) &
+                   (n_right_arr >= self.min_samples_leaf))
+        valid = value_changes & leaf_ok
+
+        valid_idx = np.nonzero(valid)[0]
+        if len(valid_idx) == 0:
+            return sorted_values[0], -np.inf
+
+        # Extract counts at valid split positions
+        left_counts = cum_counts[valid_idx]  # (k, n_classes)
+        right_counts = total_counts - left_counts
+        n_left_v = n_left_arr[valid_idx].astype(np.float64)  # (k,)
+        n_right_v = n_right_arr[valid_idx].astype(np.float64)
+
+        # Compute entropy for left and right partitions (vectorized)
+        left_probs = left_counts / n_left_v[:, None]
+        right_probs = right_counts / n_right_v[:, None]
+
+        # Entropy: -sum(p * log2(p)) for p > 0
+        with np.errstate(divide='ignore', invalid='ignore'):
+            log_left = np.where(left_probs > 0,
+                                np.log2(left_probs), 0.0)
+            log_right = np.where(right_probs > 0,
+                                 np.log2(right_probs), 0.0)
+
+        H_left = -np.sum(left_probs * log_left, axis=1)  # (k,)
+        H_right = -np.sum(right_probs * log_right, axis=1)
+
+        # Information gain
         parent_H = entropy(y, n_classes)
-        best_gain_ratio = -np.inf
-        best_threshold = sorted_values[0]
+        w_left = n_left_v / n
+        w_right = n_right_v / n
+        info_gain = parent_H - (w_left * H_left + w_right * H_right)
 
-        for i in range(len(sorted_values) - 1):
-            if sorted_values[i] == sorted_values[i + 1]:
-                continue
+        # Split information
+        with np.errstate(divide='ignore', invalid='ignore'):
+            si_left = np.where(w_left > 0,
+                               -w_left * np.log2(w_left + 1e-10), 0.0)
+            si_right = np.where(w_right > 0,
+                                -w_right * np.log2(w_right + 1e-10), 0.0)
+        split_info = si_left + si_right
+        split_info = np.maximum(split_info, 1e-10)
 
-            threshold = (sorted_values[i] + sorted_values[i + 1]) / 2
-            y_left = sorted_y[:i + 1]
-            y_right = sorted_y[i + 1:]
+        gain_ratios = info_gain / split_info
 
-            if len(y_left) < self.min_samples_leaf or \
-               len(y_right) < self.min_samples_leaf:
-                continue
-
-            H_left = entropy(y_left, n_classes)
-            H_right = entropy(y_right, n_classes)
-            gr = gain_ratio_score(
-                parent_H,
-                np.array([H_left, H_right]),
-                np.array([len(y_left), len(y_right)]),
-                len(y),
-            )
-
-            if gr > best_gain_ratio:
-                best_gain_ratio = gr
-                best_threshold = threshold
+        best_local = np.argmax(gain_ratios)
+        best_gain_ratio = gain_ratios[best_local]
+        i = valid_idx[best_local]
+        best_threshold = (sorted_values[i] + sorted_values[i + 1]) / 2.0
 
         return best_threshold, best_gain_ratio
 
@@ -456,6 +498,18 @@ class C45TreeClassifier(Classifier):
 
         return node
 
+    @staticmethod
+    def _populate_n_samples(node: TreeNode, X: np.ndarray) -> None:
+        """Populate n_samples on tree nodes built by the C++ backend."""
+        stack = [(node, np.arange(X.shape[0]))]
+        while stack:
+            nd, indices = stack.pop()
+            nd.n_samples = len(indices)
+            if not nd.is_leaf and nd.feature_index >= 0:
+                left_mask = X[indices, nd.feature_index] <= nd.threshold
+                stack.append((nd.left, indices[left_mask]))
+                stack.append((nd.right, indices[~left_mask]))
+
     def _predict_single(self, node: TreeNode, x: np.ndarray) -> int:
         """Predict a single sample.
 
@@ -539,7 +593,7 @@ class C45TreeClassifier(Classifier):
         self : C45TreeClassifier
             Returns the fitted instance.
         """
-        X = np.asarray(X)
+        X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y)
 
         if X.ndim == 1:
@@ -553,18 +607,37 @@ class C45TreeClassifier(Classifier):
         self._is_numeric = np.array([self._is_numeric_attr(X[:, i])
                                      for i in range(self.n_features_)])
 
-        # Convert y to integer indices
+        # Convert y to integer indices (vectorized)
         class_to_idx = {c: i for i, c in enumerate(self.classes_)}
-        y_idx = np.array([class_to_idx[c] for c in y])
+        sorter = np.argsort(self.classes_)
+        y_idx = sorter[np.searchsorted(self.classes_, y, sorter=sorter)]
 
-        # Build tree
-        self.tree_ = self._build_tree(X, y_idx, n_classes)
+        all_numeric = np.all(self._is_numeric)
 
-        # Prune tree if requested
-        if not self.unpruned:
+        if all_numeric:
+            rng = np.random.RandomState(42)
+            config = TreeConfig(
+                max_depth=self.max_depth,
+                min_samples_split=max(2 * self.min_samples_leaf, 10),
+                min_samples_leaf=self.min_samples_leaf,
+                min_impurity_decrease=0.001,
+                criterion="entropy",
+                n_classes=n_classes,
+            )
+            self.tree_ = build_classifier_tree(X, y_idx, config, rng)
+            self._populate_n_samples(self.tree_, X)
+            self._cpp_path = True
+        else:
+            self.tree_ = self._build_tree(X, y_idx, n_classes)
+
+        # Prune tree if requested (skip for C++ path which uses min_impurity_decrease)
+        if not self.unpruned and not getattr(self, '_cpp_path', False):
             self.tree_ = pessimistic_prune(
                 self.tree_, X, y_idx, self.confidence_factor, self.classes_
             )
+
+        # Flatten for batch prediction
+        self._flat_tree = flatten_tree(self.tree_, value_width=n_classes)
 
         self._class_to_idx = class_to_idx
         self._idx_to_class = {i: c for c, i in class_to_idx.items()}
@@ -586,14 +659,18 @@ class C45TreeClassifier(Classifier):
             Predicted class labels.
         """
         self._check_is_fitted()
-        X = np.asarray(X)
+        X = np.asarray(X, dtype=np.float64)
 
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        n_samples = X.shape[0]
-        indices = np.array([self._predict_single(self.tree_, X[i])
-                            for i in range(n_samples)])
+        if hasattr(self, '_flat_tree') and self._flat_tree is not None:
+            proba = predict_batch(self._flat_tree, X)
+            indices = np.argmax(proba, axis=1)
+        else:
+            n_samples = X.shape[0]
+            indices = np.array([self._predict_single(self.tree_, X[i])
+                                for i in range(n_samples)])
         return self.classes_[indices]
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:

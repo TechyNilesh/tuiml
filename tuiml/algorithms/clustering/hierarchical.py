@@ -1,5 +1,6 @@
 """Hierarchical Agglomerative Clustering (HAC) algorithm."""
 
+import heapq
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -238,89 +239,70 @@ class AgglomerativeClusterer(Clusterer):
 
         n_samples = X.shape[0]
 
-        # Compute pairwise distance matrix
-        dist_matrix = pairwise_distances(X, metric=self.distance)
-
-        # Build a condensed cluster-level distance matrix for O(n^2) merging.
-        # cdist[i,j] stores the linkage distance between cluster i and j.
-        # We update it incrementally using the Lance-Williams formula
-        # (or recompute for ward) after each merge.
+        # Compute pairwise distance matrix (used as mutable cluster distance matrix)
         n = n_samples
-        cdist = dist_matrix.copy()
-        # Cluster sizes for Lance-Williams updates
+        cdist = pairwise_distances(X, metric=self.distance)
         sizes = np.ones(n, dtype=int)
 
-        # Map: cluster_id -> list of original point indices
-        clusters = {i: [i] for i in range(n)}
-
-        # Active mask (which rows/cols in cdist are still valid)
-        active = np.ones(n, dtype=bool)
-
         # Track merge history
-        children = []
-        distances_list = []
+        children = np.empty((n - 1, 2), dtype=np.intp)
+        distances_arr = np.empty(n - 1, dtype=np.float64)
 
-        # Set diagonal and prepare inf mask
         np.fill_diagonal(cdist, np.inf)
 
+        # Pre-select linkage function to avoid per-step branching
+        linkage = self.linkage
+
         for step in range(n - 1):
-            # Find the closest active pair using full matrix with inf masking
             flat_idx = np.argmin(cdist)
-            mi, mj = divmod(flat_idx, n)
+            mi, mj = divmod(int(flat_idx), n)
             min_dist = cdist[mi, mj]
 
-            # Ensure mi < mj for consistency
             if mi > mj:
                 mi, mj = mj, mi
 
-            # Record merge
-            children.append([mi, mj])
-            distances_list.append(min_dist)
+            children[step, 0] = mi
+            children[step, 1] = mj
+            distances_arr[step] = min_dist
 
-            # Merge: mi absorbs mj
             new_size = sizes[mi] + sizes[mj]
-            clusters[mi] = clusters[mi] + clusters[mj]
 
-            # Vectorized update of distances from merged cluster to all others
-            other_mask = active.copy()
-            other_mask[mi] = False
-            other_mask[mj] = False
-            other_idx = np.where(other_mask)[0]
+            # Update distances from merged cluster to all others
+            d_mi = cdist[mi]
+            d_mj = cdist[mj]
 
-            if len(other_idx) > 0:
-                d_mi = cdist[mi, other_idx]
-                d_mj = cdist[mj, other_idx]
-
-                if self.linkage == 'single':
-                    new_dists = np.minimum(d_mi, d_mj)
-                elif self.linkage == 'complete':
-                    new_dists = np.maximum(d_mi, d_mj)
-                elif self.linkage == 'average':
-                    new_dists = (sizes[mi] * d_mi + sizes[mj] * d_mj) / new_size
-                elif self.linkage == 'ward':
-                    sk = sizes[other_idx].astype(float)
-                    si = float(sizes[mi])
-                    sj = float(sizes[mj])
-                    total = si + sj + sk
-                    new_dists = np.sqrt(
+            if linkage == 'single':
+                new_dists = np.minimum(d_mi, d_mj)
+            elif linkage == 'complete':
+                new_dists = np.maximum(d_mi, d_mj)
+            elif linkage == 'average':
+                new_dists = (sizes[mi] * d_mi + sizes[mj] * d_mj) / new_size
+            elif linkage == 'ward':
+                sk = sizes.astype(np.float64)
+                si = float(sizes[mi])
+                sj = float(sizes[mj])
+                total = si + sj + sk
+                new_dists = np.sqrt(
+                    np.maximum(
                         ((si + sk) * d_mi ** 2
                          + (sj + sk) * d_mj ** 2
-                         - sk * min_dist ** 2) / total
+                         - sk * min_dist ** 2) / total,
+                        0.0,
                     )
-                else:
-                    raise ValueError(f"Unknown linkage: {self.linkage}")
+                )
+            else:
+                raise ValueError(f"Unknown linkage: {linkage}")
 
-                cdist[mi, other_idx] = new_dists
-                cdist[other_idx, mi] = new_dists
+            cdist[mi, :] = new_dists
+            cdist[:, mi] = new_dists
+            cdist[mi, mi] = np.inf
 
             sizes[mi] = new_size
-            active[mj] = False
-            # Invalidate mj row/col
             cdist[mj, :] = np.inf
             cdist[:, mj] = np.inf
 
-        self.children_ = np.array(children)
-        self.distances_ = np.array(distances_list)
+        self.children_ = children
+        self.distances_ = distances_arr
 
         # Assign labels by cutting the dendrogram
         self.labels_ = self._cut_tree(n_samples)

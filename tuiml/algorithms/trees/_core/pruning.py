@@ -184,6 +184,52 @@ def reduced_error_prune_regressor(
     return node
 
 
+def _count_subtree_errors(node: TreeNode, X: np.ndarray, y: np.ndarray) -> int:
+    """Count misclassifications of the subtree on the given data.
+
+    Uses recursive partitioning to avoid per-sample tree traversal.
+
+    Parameters
+    ----------
+    node : TreeNode
+        Current tree node.
+    X : np.ndarray of shape (n_samples, n_features)
+        Feature matrix.
+    y : np.ndarray of shape (n_samples,)
+        True class labels.
+
+    Returns
+    -------
+    errors : int
+        Number of misclassified samples.
+    """
+    if len(y) == 0:
+        return 0
+
+    if node.is_leaf:
+        if node.predicted_class is not None:
+            return int(np.sum(y != node.predicted_class))
+        if node.value is not None:
+            return int(np.sum(y != int(np.argmax(node.value))))
+        return int(np.sum(y != 0))
+
+    # Split data along the node's feature
+    if node.is_numeric:
+        X_col = X[:, node.feature_index].astype(float)
+        left_mask = X_col <= node.threshold
+    else:
+        X_col = X[:, node.feature_index]
+        left_mask = X_col == node.threshold
+    right_mask = ~left_mask
+
+    errors = 0
+    if np.any(left_mask):
+        errors += _count_subtree_errors(node.left, X[left_mask], y[left_mask])
+    if np.any(right_mask):
+        errors += _count_subtree_errors(node.right, X[right_mask], y[right_mask])
+    return errors
+
+
 def pessimistic_prune(
     node: TreeNode,
     X: np.ndarray,
@@ -232,11 +278,9 @@ def pessimistic_prune(
             node.right, X[right_mask], y[right_mask], confidence_factor, classes
         )
 
-    # Subtree error
-    predictions = np.array([
-        _predict_single_cls(node, X[i]) for i in range(len(X))
-    ])
-    subtree_errors = np.sum(predictions != y)
+    # Subtree error -- partition data through children instead of
+    # calling _predict_single_cls per sample (O(n) vs O(n*depth))
+    subtree_errors = _count_subtree_errors(node, X, y)
 
     # Leaf error
     majority = Counter(y).most_common(1)[0][0] if len(y) > 0 else 0

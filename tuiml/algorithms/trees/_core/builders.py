@@ -23,7 +23,7 @@ from .splitters import (
 )
 
 # Criteria supported by the C++ full-tree builder
-_CPP_CLASSIFIER_CRITERIA = ("gini", "entropy")
+_CPP_CLASSIFIER_CRITERIA = ("gini", "entropy", "log_loss")
 _CPP_REGRESSOR_CRITERIA = ("squared_error", "friedman_mse")
 
 

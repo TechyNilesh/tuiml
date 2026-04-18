@@ -20,6 +20,7 @@ import time
 import tracemalloc
 import json
 import csv
+import signal
 import warnings
 from datetime import datetime
 from typing import Dict, List, Any, Callable, Tuple, Optional
@@ -31,26 +32,47 @@ from sklearn.metrics import silhouette_score, adjusted_rand_score
 
 warnings.filterwarnings('ignore')
 
+# Flush stdout after every print so progress is visible in real-time
+import functools
+print = functools.partial(print, flush=True)
+
+# Per-algorithm timeout in seconds (skip if exceeded)
+ALGORITHM_TIMEOUT = 300
+
+
+class AlgorithmTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise AlgorithmTimeout("Algorithm exceeded time limit")
+
 # ============================================================================
-# DATASETS CONFIGURATION (Small datasets for fast benchmarks)
+# DATASETS CONFIGURATION (10k+ samples for credible benchmarks)
 # ============================================================================
 
 CLASSIFICATION_DATASETS = [
-    # (name, loader_func, n_samples, n_features, n_classes)
-    ("iris", "sklearn.datasets:load_iris", 150, 4, 3),
+    # (name, loader_func, params, n_samples, n_features, n_classes)
+    ("synthetic_10k", "sklearn.datasets:make_classification",
+     {"n_samples": 10000, "n_features": 20, "n_classes": 5,
+      "n_informative": 15, "n_redundant": 3, "random_state": 42},
+     10000, 20, 5),
 ]
 
 REGRESSION_DATASETS = [
-    # (name, loader_func, n_samples, n_features)
-    ("cpu", "tuiml.datasets.builtin:load_cpu", 209, 6),
+    # (name, loader_func, params, n_samples, n_features)
+    ("synthetic_10k", "sklearn.datasets:make_regression",
+     {"n_samples": 10000, "n_features": 20, "n_informative": 15,
+      "noise": 10.0, "random_state": 42},
+     10000, 20),
 ]
 
-# Maximum samples for regression (pure Python implementations are slow on large datasets)
-MAX_REGRESSION_SAMPLES = 500
+MAX_REGRESSION_SAMPLES = 10000
 
 CLUSTERING_DATASETS = [
     # (name, generator_func, params)
-    ("blobs", "sklearn.datasets:make_blobs", {"n_samples": 300, "n_features": 2, "centers": 4, "random_state": 42}),
+    ("blobs_10k", "sklearn.datasets:make_blobs",
+     {"n_samples": 10000, "n_features": 10, "centers": 5, "random_state": 42}),
 ]
 
 # ============================================================================
@@ -153,27 +175,35 @@ REGRESSION_ALGORITHMS = [
 # ALGORITHM PAIRS: Clustering
 # ============================================================================
 
+# Max samples for O(n^3) clustering algorithms (agglomerative) — tuiml's
+# implementation is pure Python, so cap at 2000 to keep benchmarks viable.
+MAX_CLUSTERING_SAMPLES_CUBIC = 2000
+
 CLUSTERING_ALGORITHMS = [
-    # (Category, TuiML Config, Sklearn Config)
+    # (Category, TuiML Config, Sklearn Config, max_samples_override_or_None)
     (
         "K-Means",
         {"name": "KMeansClusterer", "module": "tuiml.algorithms", "params": {"n_clusters": 4, "random_state": 42}},
         {"name": "KMeans", "module": "sklearn.cluster", "class": "KMeans", "params": {"n_clusters": 4, "random_state": 42, "n_init": 10}},
+        None,
     ),
     (
         "DBSCAN",
         {"name": "DBSCANClusterer", "module": "tuiml.algorithms", "params": {"eps": 0.3, "min_samples": 5}},
         {"name": "DBSCAN", "module": "sklearn.cluster", "class": "DBSCAN", "params": {"eps": 0.3, "min_samples": 5}},
+        None,
     ),
     (
         "Hierarchical",
         {"name": "AgglomerativeClusterer", "module": "tuiml.algorithms", "params": {"n_clusters": 4}},
         {"name": "AgglomerativeClustering", "module": "sklearn.cluster", "class": "AgglomerativeClustering", "params": {"n_clusters": 4}},
+        MAX_CLUSTERING_SAMPLES_CUBIC,
     ),
     (
         "Gaussian Mixture (EM)",
         {"name": "GaussianMixtureClusterer", "module": "tuiml.algorithms", "params": {"n_components": 4, "random_state": 42}},
         {"name": "GaussianMixture", "module": "sklearn.mixture", "class": "GaussianMixture", "params": {"n_components": 4, "random_state": 42}},
+        None,
     ),
 ]
 
@@ -408,13 +438,13 @@ def run_classification_benchmark() -> List[Dict]:
     print("CLASSIFICATION BENCHMARKS")
     print("=" * 100)
 
-    for dataset_name, loader, n_samples, n_features, n_classes in CLASSIFICATION_DATASETS:
+    for dataset_name, loader, loader_params, n_samples, n_features, n_classes in CLASSIFICATION_DATASETS:
         print(f"\n{'─' * 100}")
         print(f"  Dataset: {dataset_name} ({n_samples} samples, {n_features} features, {n_classes} classes)")
         print(f"{'─' * 100}")
 
         try:
-            X, y = load_dataset(loader)
+            X, y = load_dataset(loader, **loader_params)
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)
         except Exception as e:
@@ -422,35 +452,50 @@ def run_classification_benchmark() -> List[Dict]:
             continue
 
         for category, weka_config, sklearn_config in CLASSIFICATION_ALGORITHMS:
+            print(f"\n  [{category}]")
             # Benchmark TuiML
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 clf_class = import_class(weka_config["module"], weka_config["name"])
                 weka_result = benchmark_classifier(weka_config["name"], clf_class, weka_config["params"], X_scaled, y)
+                signal.alarm(0)
                 weka_result["source"] = "tuiml"
                 weka_result["category"] = category
                 weka_result["dataset"] = dataset_name
                 weka_result["task"] = "classification"
                 all_results.append(weka_result)
 
-                status = f"Acc={weka_result['accuracy']:.4f}" if weka_result["status"] == "success" else f"FAILED"
-                print(f"  TuiML {weka_config['name']:<25}: {status}")
+                status = f"Acc={weka_result['accuracy']:.4f} ({weka_result['train_time_sec']:.2f}s)" if weka_result["status"] == "success" else f"FAILED"
+                print(f"    TuiML  {weka_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  TuiML {weka_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: ERROR - {str(e)[:60]}")
 
             # Benchmark sklearn
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 clf_class = import_class(sklearn_config["module"], sklearn_config["class"])
                 sklearn_result = benchmark_classifier(sklearn_config["name"], clf_class, sklearn_config["params"], X_scaled, y)
+                signal.alarm(0)
                 sklearn_result["source"] = "sklearn"
                 sklearn_result["category"] = category
                 sklearn_result["dataset"] = dataset_name
                 sklearn_result["task"] = "classification"
                 all_results.append(sklearn_result)
 
-                status = f"Acc={sklearn_result['accuracy']:.4f}" if sklearn_result["status"] == "success" else f"FAILED"
-                print(f"  sklearn  {sklearn_config['name']:<25}: {status}")
+                status = f"Acc={sklearn_result['accuracy']:.4f} ({sklearn_result['train_time_sec']:.2f}s)" if sklearn_result["status"] == "success" else f"FAILED"
+                print(f"    sklearn {sklearn_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  sklearn  {sklearn_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: ERROR - {str(e)[:60]}")
 
     return all_results
 
@@ -463,13 +508,13 @@ def run_regression_benchmark() -> List[Dict]:
     print("REGRESSION BENCHMARKS")
     print("=" * 100)
 
-    for dataset_name, loader, n_samples, n_features in REGRESSION_DATASETS:
+    for dataset_name, loader, loader_params, n_samples, n_features in REGRESSION_DATASETS:
         print(f"\n{'─' * 100}")
         print(f"  Dataset: {dataset_name} ({n_samples} samples, {n_features} features)")
         print(f"{'─' * 100}")
 
         try:
-            X, y = load_dataset(loader)
+            X, y = load_dataset(loader, **loader_params)
             
             # Subsample large datasets for pure-Python implementations
             actual_samples = X.shape[0]
@@ -487,35 +532,50 @@ def run_regression_benchmark() -> List[Dict]:
             continue
 
         for category, weka_config, sklearn_config in REGRESSION_ALGORITHMS:
+            print(f"\n  [{category}]")
             # Benchmark TuiML
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 reg_class = import_class(weka_config["module"], weka_config["name"])
                 weka_result = benchmark_regressor(weka_config["name"], reg_class, weka_config["params"], X_scaled, y)
+                signal.alarm(0)
                 weka_result["source"] = "tuiml"
                 weka_result["category"] = category
                 weka_result["dataset"] = dataset_name
                 weka_result["task"] = "regression"
                 all_results.append(weka_result)
 
-                status = f"R²={weka_result['r2_score']:.4f}" if weka_result["status"] == "success" else f"FAILED"
-                print(f"  TuiML {weka_config['name']:<25}: {status}")
+                status = f"R²={weka_result['r2_score']:.4f} ({weka_result['train_time_sec']:.2f}s)" if weka_result["status"] == "success" else f"FAILED"
+                print(f"    TuiML  {weka_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  TuiML {weka_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: ERROR - {str(e)[:60]}")
 
             # Benchmark sklearn
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 reg_class = import_class(sklearn_config["module"], sklearn_config["class"])
                 sklearn_result = benchmark_regressor(sklearn_config["name"], reg_class, sklearn_config["params"], X_scaled, y)
+                signal.alarm(0)
                 sklearn_result["source"] = "sklearn"
                 sklearn_result["category"] = category
                 sklearn_result["dataset"] = dataset_name
                 sklearn_result["task"] = "regression"
                 all_results.append(sklearn_result)
 
-                status = f"R²={sklearn_result['r2_score']:.4f}" if sklearn_result["status"] == "success" else f"FAILED"
-                print(f"  sklearn  {sklearn_config['name']:<25}: {status}")
+                status = f"R²={sklearn_result['r2_score']:.4f} ({sklearn_result['train_time_sec']:.2f}s)" if sklearn_result["status"] == "success" else f"FAILED"
+                print(f"    sklearn {sklearn_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  sklearn  {sklearn_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: ERROR - {str(e)[:60]}")
 
     return all_results
 
@@ -545,36 +605,62 @@ def run_clustering_benchmark() -> List[Dict]:
             print(f"  ✗ Failed to load dataset: {e}")
             continue
 
-        for category, weka_config, sklearn_config in CLUSTERING_ALGORITHMS:
+        for category, weka_config, sklearn_config, max_samples_override in CLUSTERING_ALGORITHMS:
+            print(f"\n  [{category}]")
+
+            # Subsample for O(n^3) algorithms
+            if max_samples_override and X_scaled.shape[0] > max_samples_override:
+                rng_sub = np.random.RandomState(42)
+                idx = rng_sub.choice(X_scaled.shape[0], max_samples_override, replace=False)
+                X_algo = X_scaled[idx]
+                y_algo = y_true[idx] if y_true is not None else None
+                print(f"    (Subsampled to {max_samples_override} for O(n³) algorithm)")
+            else:
+                X_algo = X_scaled
+                y_algo = y_true
             # Benchmark TuiML
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 clusterer_class = import_class(weka_config["module"], weka_config["name"])
-                weka_result = benchmark_clusterer(weka_config["name"], clusterer_class, weka_config["params"], X_scaled, y_true)
+                weka_result = benchmark_clusterer(weka_config["name"], clusterer_class, weka_config["params"], X_algo, y_algo)
+                signal.alarm(0)
                 weka_result["source"] = "tuiml"
                 weka_result["category"] = category
                 weka_result["dataset"] = dataset_name
                 weka_result["task"] = "clustering"
                 all_results.append(weka_result)
 
-                status = f"Sil={weka_result['silhouette']:.4f}" if weka_result["status"] == "success" and weka_result["silhouette"] else "FAILED"
-                print(f"  TuiML {weka_config['name']:<25}: {status}")
+                status = f"Sil={weka_result['silhouette']:.4f} ({weka_result['train_time_sec']:.2f}s)" if weka_result["status"] == "success" and weka_result["silhouette"] else "FAILED"
+                print(f"    TuiML  {weka_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  TuiML {weka_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    TuiML  {weka_config['name']:<30}: ERROR - {str(e)[:60]}")
 
             # Benchmark sklearn
             try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(ALGORITHM_TIMEOUT)
                 clusterer_class = import_class(sklearn_config["module"], sklearn_config["class"])
-                sklearn_result = benchmark_clusterer(sklearn_config["name"], clusterer_class, sklearn_config["params"], X_scaled, y_true)
+                sklearn_result = benchmark_clusterer(sklearn_config["name"], clusterer_class, sklearn_config["params"], X_algo, y_algo)
                 sklearn_result["source"] = "sklearn"
                 sklearn_result["category"] = category
                 sklearn_result["dataset"] = dataset_name
                 sklearn_result["task"] = "clustering"
                 all_results.append(sklearn_result)
 
-                status = f"Sil={sklearn_result['silhouette']:.4f}" if sklearn_result["status"] == "success" and sklearn_result["silhouette"] else "FAILED"
-                print(f"  sklearn  {sklearn_config['name']:<25}: {status}")
+                signal.alarm(0)
+                status = f"Sil={sklearn_result['silhouette']:.4f} ({sklearn_result['train_time_sec']:.2f}s)" if sklearn_result["status"] == "success" and sklearn_result["silhouette"] else "FAILED"
+                print(f"    sklearn {sklearn_config['name']:<30}: {status}")
+            except AlgorithmTimeout:
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: SKIPPED (>{ALGORITHM_TIMEOUT}s timeout)")
             except Exception as e:
-                print(f"  sklearn  {sklearn_config['name']:<25}: ERROR - {str(e)[:40]}")
+                signal.alarm(0)
+                print(f"    sklearn {sklearn_config['name']:<30}: ERROR - {str(e)[:60]}")
 
     return all_results
 

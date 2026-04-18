@@ -19,10 +19,13 @@ class LogitBoostClassifier(Classifier):
     ----------
     base_classifier : str or class, default='DecisionStumpClassifier'
         The base classifier to use.
-    n_iterations : int, default=10
+    n_iterations : int, default=100
         The number of boosting iterations.
-    shrinkage : float, default=1.0
+    shrinkage : float, default=0.1
         Learning rate (shrinkage parameter).
+    max_depth : int, default=3
+        Maximum depth of the regression trees used as weak learners.
+        Depth 1 produces stumps; depth 3 captures feature interactions.
     use_resampling : bool, default=False
         Whether to use resampling instead of weighting.
     weight_threshold : float, default=100
@@ -55,8 +58,9 @@ class LogitBoostClassifier(Classifier):
     """
 
     def __init__(self, base_classifier: Any = 'DecisionStumpClassifier',
-                 n_iterations: int = 10,
-                 shrinkage: float = 1.0,
+                 n_iterations: int = 100,
+                 shrinkage: float = 0.1,
+                 max_depth: int = 3,
                  use_resampling: bool = False,
                  weight_threshold: float = 100,
                  random_state: Optional[int] = None):
@@ -64,6 +68,7 @@ class LogitBoostClassifier(Classifier):
         self.base_classifier = base_classifier
         self.n_iterations = n_iterations
         self.shrinkage = shrinkage
+        self.max_depth = max_depth
         self.use_resampling = use_resampling
         self.weight_threshold = weight_threshold
         self.random_state = random_state
@@ -80,12 +85,16 @@ class LogitBoostClassifier(Classifier):
                 "description": "Base classifier name"
             },
             "n_iterations": {
-                "type": "integer", "default": 10, "minimum": 1,
+                "type": "integer", "default": 100, "minimum": 1,
                 "description": "Number of boosting iterations"
             },
             "shrinkage": {
-                "type": "number", "default": 1.0, "minimum": 0.01, "maximum": 1.0,
+                "type": "number", "default": 0.1, "minimum": 0.01, "maximum": 1.0,
                 "description": "Learning rate (shrinkage)"
+            },
+            "max_depth": {
+                "type": "integer", "default": 3, "minimum": 1,
+                "description": "Maximum depth of regression tree weak learners"
             },
             "use_resampling": {
                 "type": "boolean", "default": False,
@@ -145,30 +154,13 @@ class LogitBoostClassifier(Classifier):
         exp_F = np.exp(F - np.max(F, axis=1, keepdims=True))
         return exp_F / (np.sum(exp_F, axis=1, keepdims=True) + 1e-10)
 
-    def _fit_regression_stump(self, X: np.ndarray, z: np.ndarray,
-                               weights: np.ndarray) -> dict:
-        """Fit a weighted regression stump to the working response.
-
-        Parameters
-        ----------
-        X : np.ndarray of shape (n_samples, n_features)
-            Training features.
-        z : np.ndarray of shape (n_samples,)
-            Working response values.
-        weights : np.ndarray of shape (n_samples,)
-            Sample weights for weighted least squares.
-
-        Returns
-        -------
-        stump : dict
-            Dictionary with keys 'feature', 'threshold', 'left_val', 'right_val'.
-        """
+    def _find_best_split(self, X: np.ndarray, z: np.ndarray,
+                          weights: np.ndarray):
+        """Find the best weighted regression split across all features."""
         n_samples, n_features = X.shape
-        best_loss = np.inf
-        best_stump = {'feature': 0, 'threshold': 0.0,
-                      'left_val': np.average(z, weights=weights),
-                      'right_val': np.average(z, weights=weights)}
-
+        best_gain = -np.inf
+        best_feature = 0
+        best_threshold = 0.0
         total_wz = np.sum(weights * z)
         total_w = np.sum(weights)
 
@@ -178,58 +170,64 @@ class LogitBoostClassifier(Classifier):
             z_sorted = z[order]
             w_sorted = weights[order]
 
-            left_wz = 0.0
-            left_w = 0.0
+            cum_wz = np.cumsum(w_sorted * z_sorted)[:-1]
+            cum_w = np.cumsum(w_sorted)[:-1]
+            right_w = total_w - cum_w
+            right_wz = total_wz - cum_wz
 
-            for i in range(n_samples - 1):
-                left_wz += w_sorted[i] * z_sorted[i]
-                left_w += w_sorted[i]
+            valid = (x_sorted[:-1] != x_sorted[1:]) & (cum_w > 1e-10) & (right_w > 1e-10)
+            if not np.any(valid):
+                continue
 
-                # Skip if same feature value as next point
-                if x_sorted[i] == x_sorted[i + 1]:
-                    continue
+            gain = (cum_wz[valid] ** 2 / cum_w[valid] +
+                    right_wz[valid] ** 2 / right_w[valid])
+            best_idx = np.argmax(gain)
+            if gain[best_idx] > best_gain:
+                best_gain = gain[best_idx]
+                best_feature = feat
+                pos = np.nonzero(valid)[0][best_idx]
+                best_threshold = (x_sorted[pos] + x_sorted[pos + 1]) / 2.0
 
-                right_w = total_w - left_w
-                right_wz = total_wz - left_wz
+        return best_feature, best_threshold, best_gain
 
-                if left_w < 1e-10 or right_w < 1e-10:
-                    continue
+    def _build_regression_tree(self, X: np.ndarray, z: np.ndarray,
+                                weights: np.ndarray, depth: int = 0) -> dict:
+        """Build a weighted regression tree up to max_depth."""
+        leaf_val = np.average(z, weights=weights) if np.sum(weights) > 1e-10 else 0.0
 
-                left_val = left_wz / left_w
-                right_val = right_wz / right_w
+        if depth >= self.max_depth or len(z) < 4:
+            return {'leaf': True, 'value': leaf_val}
 
-                # Weighted MSE reduction
-                loss = -(left_wz ** 2 / left_w + right_wz ** 2 / right_w)
+        feat, thresh, gain = self._find_best_split(X, z, weights)
+        if gain <= -np.inf:
+            return {'leaf': True, 'value': leaf_val}
 
-                if loss < best_loss:
-                    best_loss = loss
-                    best_stump = {
-                        'feature': feat,
-                        'threshold': (x_sorted[i] + x_sorted[i + 1]) / 2.0,
-                        'left_val': left_val,
-                        'right_val': right_val,
-                    }
+        left_mask = X[:, feat] <= thresh
+        right_mask = ~left_mask
 
-        return best_stump
+        if np.sum(left_mask) < 2 or np.sum(right_mask) < 2:
+            return {'leaf': True, 'value': leaf_val}
 
-    def _predict_regression_stump(self, stump: dict,
-                                   X: np.ndarray) -> np.ndarray:
-        """Predict using a regression stump.
+        left = self._build_regression_tree(X[left_mask], z[left_mask],
+                                            weights[left_mask], depth + 1)
+        right = self._build_regression_tree(X[right_mask], z[right_mask],
+                                             weights[right_mask], depth + 1)
+        return {'leaf': False, 'feature': feat, 'threshold': thresh,
+                'left': left, 'right': right}
 
-        Parameters
-        ----------
-        stump : dict
-            Fitted stump with 'feature', 'threshold', 'left_val', 'right_val'.
-        X : np.ndarray of shape (n_samples, n_features)
-            Input data.
+    def _predict_tree(self, tree: dict, X: np.ndarray) -> np.ndarray:
+        """Predict using a regression tree."""
+        if tree['leaf']:
+            return np.full(X.shape[0], tree['value'])
 
-        Returns
-        -------
-        predictions : np.ndarray of shape (n_samples,)
-            Predicted regression values.
-        """
-        mask = X[:, stump['feature']] <= stump['threshold']
-        predictions = np.where(mask, stump['left_val'], stump['right_val'])
+        predictions = np.empty(X.shape[0])
+        left_mask = X[:, tree['feature']] <= tree['threshold']
+        right_mask = ~left_mask
+
+        if np.any(left_mask):
+            predictions[left_mask] = self._predict_tree(tree['left'], X[left_mask])
+        if np.any(right_mask):
+            predictions[right_mask] = self._predict_tree(tree['right'], X[right_mask])
         return predictions
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "LogitBoostClassifier":
@@ -291,12 +289,10 @@ class LogitBoostClassifier(Classifier):
                 z = (y_k - p_k) / (weights + 1e-6)
                 z = np.clip(z, -4, 4)  # Truncate extreme values
 
-                # Fit a weighted regression stump to the working response
-                stump = self._fit_regression_stump(X, z, weights)
-                self.estimators_[k].append(stump)
+                tree = self._build_regression_tree(X, z, weights)
+                self.estimators_[k].append(tree)
 
-                # Update F
-                predictions = self._predict_regression_stump(stump, X)
+                predictions = self._predict_tree(tree, X)
                 F[:, k] += self.shrinkage * predictions
 
         self._is_fitted = True
@@ -326,8 +322,8 @@ class LogitBoostClassifier(Classifier):
 
         # Sum predictions from all estimators
         for k in range(self.n_classes_):
-            for stump in self.estimators_[k]:
-                predictions = self._predict_regression_stump(stump, X)
+            for tree in self.estimators_[k]:
+                predictions = self._predict_tree(tree, X)
                 F[:, k] += self.shrinkage * predictions
 
         return self._softmax(F)

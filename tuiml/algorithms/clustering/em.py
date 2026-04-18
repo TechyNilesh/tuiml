@@ -49,7 +49,7 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
     ----------
     n_components : int, default=2
         The number of mixture components.
-    max_iter : int, default=100
+    max_iter : int, default=200
         The maximum number of EM iterations to perform.
     tol : float, default=1e-6
         The convergence threshold. EM iterations will stop when the
@@ -60,7 +60,7 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
         - ``"full"``: Each component has its own general covariance matrix.
         - ``"diag"``: Each component has its own diagonal covariance matrix.
         - ``"spherical"``: Each component has its own single variance.
-    n_init : int, default=1
+    n_init : int, default=10
         The number of initializations to perform. The best results are kept.
     random_state : int, optional, default=None
         Controls the random seed given to the method chosen to
@@ -130,10 +130,10 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
     """
 
     def __init__(self, n_components: int = 2,
-                 max_iter: int = 100,
+                 max_iter: int = 200,
                  tol: float = 1e-6,
                  covariance_type: str = 'full',
-                 n_init: int = 1,
+                 n_init: int = 10,
                  random_state: Optional[int] = None):
         """Initialize GaussianMixtureClusterer clusterer.
 
@@ -141,13 +141,13 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
         ----------
         n_components : int, default=2
             Number of Gaussian components.
-        max_iter : int, default=100
+        max_iter : int, default=200
             Maximum iterations.
         tol : float, default=1e-6
             Convergence tolerance.
         covariance_type : str, default='full'
             Type of covariance.
-        n_init : int, default=1
+        n_init : int, default=10
             Number of initializations.
         random_state : int, optional
             Random seed.
@@ -178,7 +178,7 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
             },
             "max_iter": {
                 "type": "integer",
-                "default": 100,
+                "default": 200,
                 "minimum": 1,
                 "description": "Maximum EM iterations"
             },
@@ -196,7 +196,7 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
             },
             "n_init": {
                 "type": "integer",
-                "default": 1,
+                "default": 10,
                 "minimum": 1,
                 "description": "Number of initializations"
             }
