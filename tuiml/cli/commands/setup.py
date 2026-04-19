@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -63,66 +64,147 @@ def confirm(prompt: str, default: bool = True, assume_yes: bool = False) -> bool
 
 
 # ---------------------------------------------------------------------------
-# Detection
+# Client registry
 # ---------------------------------------------------------------------------
+#
+# Each client spec has:
+#   id        : short slug used by --client flag
+#   name      : human-readable label
+#   detect    : Path that, if it exists, indicates the client is installed
+#   kind      : "json-mcp"  (JSON config with mcpServers key)
+#                "json-key" (JSON config with custom key, eg Zed)
+#                "toml-mcp" (TOML config, eg OpenAI Codex CLI)
+#                "skill"    (drop SKILL.md in a skills directory)
+#   config    : Path to the config file (for json/toml)
+#   key       : Top-level config key (default "mcpServers", overridable)
+#   skills_dir: Path to skills directory (for skill kind)
 
-def claude_desktop_config_path() -> Path:
-    """Return Claude Desktop's MCP config file path for the current OS."""
-    home = Path.home()
+HOME = Path.home()
+
+
+def _xdg_config(name: str) -> Path:
+    """Return $XDG_CONFIG_HOME/name (or ~/.config/name)."""
+    import os
+    base = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
+    return base / name
+
+
+def _platform_app_dir(macos: str, linux: str, windows: str) -> Path:
+    """Return the per-platform application support directory."""
     if sys.platform == "darwin":
-        return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    if sys.platform.startswith("linux"):
-        return home / ".config" / "Claude" / "claude_desktop_config.json"
+        return HOME / "Library" / "Application Support" / macos
     if sys.platform == "win32":
-        return home / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json"
-    return home / ".claude_desktop_config.json"
+        return HOME / "AppData" / "Roaming" / windows
+    # linux / wsl
+    return _xdg_config(linux)
 
 
-def cursor_mcp_config_path() -> Path:
-    """Return Cursor's MCP config file path."""
-    return Path.home() / ".cursor" / "mcp.json"
-
-
-def claude_code_skills_dir() -> Path:
-    """Return Claude Code skills directory."""
-    return Path.home() / ".claude" / "skills"
-
-
-def detect_clients() -> dict:
-    """Detect which AI clients are installed by checking standard config paths."""
-    detected = {}
-
-    # Claude Desktop: detected if config dir exists
-    claude_desktop = claude_desktop_config_path()
-    if claude_desktop.parent.exists():
-        detected["claude-desktop"] = {
+def client_specs() -> list[dict]:
+    """Return all known MCP client specs."""
+    return [
+        # ----- Claude Desktop ----------------------------------------------
+        {
+            "id": "claude-desktop",
             "name": "Claude Desktop",
-            "type": "mcp",
-            "config_path": claude_desktop,
-        }
-
-    # Cursor: detected if .cursor dir exists
-    if (Path.home() / ".cursor").exists():
-        detected["cursor"] = {
-            "name": "Cursor",
-            "type": "mcp",
-            "config_path": cursor_mcp_config_path(),
-        }
-
-    # Claude Code: detected if .claude dir exists
-    claude_code = Path.home() / ".claude"
-    if claude_code.exists():
-        detected["claude-code"] = {
+            "kind": "json-mcp",
+            "detect": _platform_app_dir("Claude", "Claude", "Claude"),
+            "config": _platform_app_dir("Claude", "Claude", "Claude") / "claude_desktop_config.json",
+        },
+        # ----- Claude Code (skill file) ------------------------------------
+        {
+            "id": "claude-code",
             "name": "Claude Code",
-            "type": "skill",
-            "skills_dir": claude_code_skills_dir(),
-        }
+            "kind": "skill",
+            "detect": HOME / ".claude",
+            "skills_dir": HOME / ".claude" / "skills",
+        },
+        # ----- ChatGPT Desktop ---------------------------------------------
+        # OpenAI added MCP support in 2026; config layout mirrors Claude Desktop.
+        {
+            "id": "chatgpt-desktop",
+            "name": "ChatGPT Desktop",
+            "kind": "json-mcp",
+            "detect": _platform_app_dir("ChatGPT", "ChatGPT", "ChatGPT"),
+            "config": _platform_app_dir("ChatGPT", "ChatGPT", "ChatGPT") / "mcp_config.json",
+        },
+        # ----- Perplexity Desktop (Comet) ----------------------------------
+        {
+            "id": "perplexity",
+            "name": "Perplexity Desktop",
+            "kind": "json-mcp",
+            "detect": _platform_app_dir("Perplexity", "Perplexity", "Perplexity"),
+            "config": _platform_app_dir("Perplexity", "Perplexity", "Perplexity") / "mcp_config.json",
+        },
+        # ----- OpenAI Codex CLI --------------------------------------------
+        {
+            "id": "codex",
+            "name": "OpenAI Codex CLI",
+            "kind": "toml-mcp",
+            "detect": HOME / ".codex",
+            "config": HOME / ".codex" / "config.toml",
+        },
+        # ----- Cursor ------------------------------------------------------
+        {
+            "id": "cursor",
+            "name": "Cursor",
+            "kind": "json-mcp",
+            "detect": HOME / ".cursor",
+            "config": HOME / ".cursor" / "mcp.json",
+        },
+        # ----- Windsurf (Codeium) ------------------------------------------
+        {
+            "id": "windsurf",
+            "name": "Windsurf",
+            "kind": "json-mcp",
+            "detect": HOME / ".codeium" / "windsurf",
+            "config": HOME / ".codeium" / "windsurf" / "mcp_config.json",
+        },
+        # ----- Zed (uses "context_servers" key) ----------------------------
+        {
+            "id": "zed",
+            "name": "Zed",
+            "kind": "json-key",
+            "key": "context_servers",
+            "detect": _xdg_config("zed"),
+            "config": _xdg_config("zed") / "settings.json",
+        },
+        # ----- Continue (VS Code) ------------------------------------------
+        {
+            "id": "continue",
+            "name": "Continue (VS Code)",
+            "kind": "json-mcp",
+            "detect": HOME / ".continue",
+            "config": HOME / ".continue" / "config.json",
+        },
+        # ----- VS Code MCP (1.99+ native) ----------------------------------
+        # VS Code stores MCP config in user settings under "mcp.servers".
+        {
+            "id": "vscode",
+            "name": "VS Code (Copilot)",
+            "kind": "json-key",
+            "key": "mcp.servers",
+            "detect": _platform_app_dir("Code/User", "Code/User", "Code/User"),
+            "config": _platform_app_dir("Code/User", "Code/User", "Code/User") / "settings.json",
+        },
+        # ----- Goose (Block) -----------------------------------------------
+        # Goose uses YAML; we don't write it automatically — print instructions.
+        {
+            "id": "goose",
+            "name": "Goose",
+            "kind": "yaml-instructions",
+            "detect": _xdg_config("goose"),
+            "config": _xdg_config("goose") / "config.yaml",
+        },
+    ]
 
-    return detected
+
+def detect_clients() -> list[dict]:
+    """Return only the specs whose detect path exists."""
+    return [c for c in client_specs() if c["detect"].exists()]
 
 
 # ---------------------------------------------------------------------------
-# MCP config writers
+# File writers
 # ---------------------------------------------------------------------------
 
 def backup_file(path: Path) -> Optional[Path]:
@@ -135,13 +217,30 @@ def backup_file(path: Path) -> Optional[Path]:
     return backup
 
 
-def add_mcp_server(config_path: Path, server_name: str, command: str) -> tuple[bool, str]:
-    """Add a TuiML MCP server entry to a JSON config without clobbering existing servers.
+def _set_nested(obj: dict, dotted_key: str, value) -> None:
+    """Set obj[a][b][c] = value for dotted_key='a.b.c', creating intermediate dicts."""
+    parts = dotted_key.split(".")
+    cur = obj
+    for p in parts[:-1]:
+        cur = cur.setdefault(p, {})
+        if not isinstance(cur, dict):
+            raise ValueError(f"Conflicting non-dict value at '{p}' in config")
+    cur[parts[-1]] = value
 
-    Returns (changed, reason).
-    """
+
+def _get_nested(obj: dict, dotted_key: str):
+    parts = dotted_key.split(".")
+    cur = obj
+    for p in parts:
+        if not isinstance(cur, dict) or p not in cur:
+            return None
+        cur = cur[p]
+    return cur
+
+
+def write_json_mcp(config_path: Path, key: str, server_name: str, command: str) -> tuple[bool, str]:
+    """Write an MCP server entry into a JSON config under `key` (supports dotted keys like 'mcp.servers')."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
-
     if config_path.exists():
         try:
             data = json.loads(config_path.read_text() or "{}")
@@ -150,32 +249,63 @@ def add_mcp_server(config_path: Path, server_name: str, command: str) -> tuple[b
     else:
         data = {}
 
-    servers = data.setdefault("mcpServers", {})
-    if server_name in servers:
-        existing = servers[server_name].get("command")
-        if existing == command:
+    existing_block = _get_nested(data, key)
+    if not isinstance(existing_block, dict):
+        existing_block = {}
+
+    if server_name in existing_block:
+        if existing_block[server_name].get("command") == command:
             return False, "already configured"
-        # Update existing to point to current command
         backup_file(config_path)
-        servers[server_name] = {"command": command}
+        existing_block[server_name] = {"command": command}
+        _set_nested(data, key, existing_block)
         config_path.write_text(json.dumps(data, indent=2))
-        return True, f"updated existing entry (was: {existing})"
+        return True, "updated existing entry"
 
     backup_file(config_path)
-    servers[server_name] = {"command": command}
+    existing_block[server_name] = {"command": command}
+    _set_nested(data, key, existing_block)
     config_path.write_text(json.dumps(data, indent=2))
     return True, "added new entry"
 
 
-# ---------------------------------------------------------------------------
-# Skill file installer
-# ---------------------------------------------------------------------------
+def write_toml_mcp(config_path: Path, server_name: str, command: str) -> tuple[bool, str]:
+    """Append an [mcp_servers.<name>] section to a TOML config (Codex CLI style).
+
+    Idempotent: if the same section already exists with the same command, no
+    change. Otherwise, replace any prior tuiml block.
+    """
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    section_header = f"[mcp_servers.{server_name}]"
+    new_block = f'{section_header}\ncommand = "{command}"\n'
+
+    if not config_path.exists():
+        config_path.write_text(new_block)
+        return True, "created new config"
+
+    text = config_path.read_text()
+
+    # If the exact line is already present, do nothing.
+    if section_header in text and f'command = "{command}"' in text:
+        return False, "already configured"
+
+    backup_file(config_path)
+
+    # Remove any existing [mcp_servers.<name>] block (and following lines until next [section] or EOF)
+    pattern = re.compile(
+        rf"\[mcp_servers\.{re.escape(server_name)}\][^\[]*",
+        re.MULTILINE,
+    )
+    cleaned = pattern.sub("", text).rstrip() + "\n"
+
+    config_path.write_text(cleaned + "\n" + new_block)
+    return True, "added entry"
+
 
 def install_skill_file(skills_dir: Path) -> tuple[bool, str]:
     """Copy the bundled SKILL.md into a coding agent's skills directory."""
-    # Locate the skill file inside the installed tuiml package
     try:
-        from importlib.resources import files  # py3.9+
+        from importlib.resources import files
         skill_src = files("tuiml.llm").joinpath("Skill.md")
         if not skill_src.is_file():
             return False, f"skill file not found in package: {skill_src}"
@@ -188,8 +318,7 @@ def install_skill_file(skills_dir: Path) -> tuple[bool, str]:
     target = target_dir / "SKILL.md"
 
     if target.exists():
-        existing = target.read_text(encoding="utf-8")
-        if existing == src_text:
+        if target.read_text(encoding="utf-8") == src_text:
             return False, "already up to date"
         backup_file(target)
 
@@ -197,24 +326,71 @@ def install_skill_file(skills_dir: Path) -> tuple[bool, str]:
     return True, f"installed to {target}"
 
 
+def print_yaml_instructions(spec: dict) -> tuple[bool, str]:
+    """Print manual setup instructions for YAML-config clients (Goose)."""
+    snippet = (
+        "extensions:\n"
+        "  tuiml:\n"
+        "    type: stdio\n"
+        "    command: tuiml-mcp\n"
+        "    enabled: true\n"
+    )
+    info(f"  Add to {spec['config']}:")
+    for line in snippet.splitlines():
+        click.echo(f"      {line}")
+    return False, "manual step (YAML config not auto-edited)"
+
+
+# ---------------------------------------------------------------------------
+# Per-client dispatcher
+# ---------------------------------------------------------------------------
+
+def configure(spec: dict) -> tuple[bool, str]:
+    kind = spec["kind"]
+    if kind == "json-mcp":
+        return write_json_mcp(spec["config"], "mcpServers", "tuiml", "tuiml-mcp")
+    if kind == "json-key":
+        return write_json_mcp(spec["config"], spec["key"], "tuiml", "tuiml-mcp")
+    if kind == "toml-mcp":
+        return write_toml_mcp(spec["config"], "tuiml", "tuiml-mcp")
+    if kind == "skill":
+        return install_skill_file(spec["skills_dir"])
+    if kind == "yaml-instructions":
+        return print_yaml_instructions(spec)
+    return False, f"unknown client kind: {kind}"
+
+
+def describe_target(spec: dict) -> str:
+    if spec["kind"] == "skill":
+        return f"skills dir: {spec['skills_dir']}"
+    return str(spec["config"])
+
+
 # ---------------------------------------------------------------------------
 # Click command
 # ---------------------------------------------------------------------------
+
+ALL_CLIENT_IDS = [c["id"] for c in client_specs()]
+
 
 @click.command("setup")
 @click.option("--yes", "-y", "assume_yes", is_flag=True,
               help="Skip prompts and configure all detected clients.")
 @click.option("--list", "list_only", is_flag=True,
               help="List detected clients without making any changes.")
-@click.option("--client", multiple=True,
-              type=click.Choice(["claude-desktop", "cursor", "claude-code"]),
-              help="Configure only the specified client(s). Can be passed multiple times.")
-def setup(assume_yes: bool, list_only: bool, client: tuple[str, ...]) -> None:
+@click.option("--client", "clients", multiple=True,
+              help="Configure only the specified client(s). Repeatable. "
+                   "Run 'tuiml setup --list' to see valid IDs.")
+def setup(assume_yes: bool, list_only: bool, clients: tuple[str, ...]) -> None:
     """Connect TuiML to your AI agents.
 
-    Detects installed clients (Claude Desktop, Cursor, Claude Code, ...) and
-    interactively wires them up: appends an MCP server entry for MCP clients,
-    or copies the SKILL.md file for coding agents that use skills.
+    Detects installed clients and wires them up: appends an MCP server entry
+    for MCP clients, copies the SKILL.md file for skill-based agents, or
+    prints manual instructions for YAML/unsupported configs.
+
+    Supported clients: Claude Desktop, Claude Code, ChatGPT Desktop,
+    Perplexity Desktop, Cursor, Windsurf, OpenAI Codex CLI, Zed,
+    Continue (VS Code), VS Code (Copilot), Goose.
     """
     banner()
 
@@ -225,58 +401,54 @@ def setup(assume_yes: bool, list_only: bool, client: tuple[str, ...]) -> None:
         warn("No AI clients detected.")
         click.echo()
         info("Looked in:")
-        info(f"  Claude Desktop: {claude_desktop_config_path().parent}")
-        info(f"  Cursor: {Path.home() / '.cursor'}")
-        info(f"  Claude Code: {Path.home() / '.claude'}")
+        for spec in client_specs():
+            info(f"  {spec['name']:22} {spec['detect']}")
         click.echo()
         info("Install one of these clients, then re-run: tuiml setup")
         return
 
-    # Print detection summary
     section("Detected:")
-    for key, c in detected.items():
-        if c["type"] == "mcp":
-            info(f"  {C.GREEN}✓{C.RESET} {c['name']:20} ({c['config_path']})")
-        else:
-            info(f"  {C.GREEN}✓{C.RESET} {c['name']:20} (skills dir: {c['skills_dir']})")
+    for spec in detected:
+        info(f"  {C.GREEN}✓{C.RESET} {spec['name']:22} ({describe_target(spec)})")
 
     if list_only:
         click.echo()
         return
 
     # Filter by --client if provided
-    if client:
-        detected = {k: v for k, v in detected.items() if k in client}
+    if clients:
+        unknown = [c for c in clients if c not in ALL_CLIENT_IDS]
+        if unknown:
+            error(f"Unknown client(s): {', '.join(unknown)}")
+            info(f"Valid IDs: {', '.join(ALL_CLIENT_IDS)}")
+            sys.exit(1)
+        detected = [s for s in detected if s["id"] in clients]
         if not detected:
-            error("None of the specified clients were detected.")
+            error("None of the specified clients were detected on this machine.")
             sys.exit(1)
 
     section("Configuration:")
     changes_made = 0
-    for key, c in detected.items():
-        if not confirm(f"Configure {c['name']}?", default=True, assume_yes=assume_yes):
-            info(f"  Skipped {c['name']}")
+    for spec in detected:
+        if not confirm(f"Configure {spec['name']}?", default=True, assume_yes=assume_yes):
+            info(f"  Skipped {spec['name']}")
             continue
 
-        if c["type"] == "mcp":
-            changed, reason = add_mcp_server(c["config_path"], "tuiml", "tuiml-mcp")
-            if changed:
-                success(f"  {c['name']}: {reason}")
-                changes_made += 1
-            else:
-                info(f"  {c['name']}: {reason}")
-        elif c["type"] == "skill":
-            changed, reason = install_skill_file(c["skills_dir"])
-            if changed:
-                success(f"  {c['name']}: {reason}")
-                changes_made += 1
-            else:
-                info(f"  {c['name']}: {reason}")
+        try:
+            changed, reason = configure(spec)
+        except Exception as exc:
+            error(f"  {spec['name']}: {exc}")
+            continue
 
-    # Final message
+        if changed:
+            success(f"  {spec['name']}: {reason}")
+            changes_made += 1
+        else:
+            info(f"  {spec['name']}: {reason}")
+
     section("Done.")
     if changes_made:
-        info("Restart your AI client to activate TuiML.")
+        info("Restart your AI client(s) to activate TuiML.")
         click.echo()
         info(f"Try asking your agent: {C.CYAN}\"Train a random forest on iris and report accuracy\"{C.RESET}")
     else:
