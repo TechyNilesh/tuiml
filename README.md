@@ -45,57 +45,6 @@ tuiml setup
 
 Your agent discovers algorithms, sets parameters from the schema, trains, evaluates, and returns structured results. No glue code.
 
-## Python API
-
-Same workflows are available directly from Python.
-
-**High-level &mdash; one-liner:**
-
-```python
-from tuiml import train
-
-result = train("RandomForestClassifier", "iris", target="class", cv=10)
-print(f"Accuracy: {result.metrics['accuracy_score']:.3f}")
-```
-
-**Mid-level &mdash; chainable workflow:**
-
-```python
-from tuiml import Workflow
-
-result = (Workflow()
-    .data("iris", target="class")
-    .preprocess("SimpleImputer", "StandardScaler")
-    .algorithm("RandomForestClassifier", n_estimators=100)
-    .evaluate(cv=10, metrics=["accuracy_score", "f1_score"])
-    .run())
-```
-
-**Low-level &mdash; full OOP control:**
-
-```python
-from tuiml.algorithms.trees import RandomForestClassifier
-from tuiml.datasets import load_iris
-from tuiml.evaluation import accuracy_score, train_test_split
-
-data = load_iris()
-X_train, X_test, y_train, y_test = train_test_split(data.X, data.y, test_size=0.2)
-clf = RandomForestClassifier(n_estimators=100)
-clf.fit(X_train, y_train)
-print(accuracy_score(y_test, clf.predict(X_test)))
-```
-
-## CLI
-
-```bash
-tuiml train RandomForestClassifier data.csv class --cv 10
-tuiml list --type classifier --search "forest"
-tuiml experiment -a RandomForestClassifier -a SVC -d iris.csv -t class --cv 10
-tuiml serve model.pkl --port 8000
-tuiml setup           # connect TuiML to your AI agents
-tuiml-mcp             # run the MCP server directly
-```
-
 ## What's Included
 
 TuiML ships with 13 algorithm families, many originally from Weka, completely rewritten in Python with C++ acceleration for hot paths.
