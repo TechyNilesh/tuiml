@@ -195,6 +195,16 @@ def client_specs() -> list[dict]:
             "detect": _xdg_config("goose"),
             "config": _xdg_config("goose") / "config.yaml",
         },
+        # ----- OpenClaw (CLI agent) ----------------------------------------
+        # Config lives at ~/.openclaw/openclaw.json with nested "mcp.servers".
+        {
+            "id": "openclaw",
+            "name": "OpenClaw",
+            "kind": "json-key",
+            "key": "mcp.servers",
+            "detect": HOME / ".openclaw",
+            "config": HOME / ".openclaw" / "openclaw.json",
+        },
     ]
 
 
@@ -390,7 +400,7 @@ def setup(assume_yes: bool, list_only: bool, clients: tuple[str, ...]) -> None:
 
     Supported clients: Claude Desktop, Claude Code, ChatGPT Desktop,
     Perplexity Desktop, Cursor, Windsurf, OpenAI Codex CLI, Zed,
-    Continue (VS Code), VS Code (Copilot), Goose.
+    Continue (VS Code), VS Code (Copilot), Goose, OpenClaw.
     """
     banner()
 
