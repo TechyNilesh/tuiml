@@ -5,6 +5,24 @@ All notable changes to TuiML will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-04-22
+
+### Added
+- `tuiml setup` CLI wizard for configuring MCP clients (Claude Code, Claude Desktop, Cursor, OpenClaw, Perplexity Desktop, and more) with auto-detection of installed clients.
+- Star History chart and download badge in README.
+
+### Changed
+- Repositioned tuiml as an agent-native ML runtime; slimmed README to focus on agent workflows over Python/CLI examples.
+- Improved algorithm defaults and extended benchmarks to 10k samples.
+- Updated SVM kernel handling and neighbor search internals.
+- Enhanced workflow preprocessing and switched Python badge to show ≥3.10.
+
+### Fixed
+- XGBoost and LightGBM wrappers no longer require scikit-learn to be installed: both now use their native training APIs (`xgb.train` + `DMatrix`, `lgb.train` + `Dataset`) instead of the sklearn-compatible estimator wrappers.
+- MCP server upload/train/serve path resolution issues.
+- Author display on the PyPI sidebar.
+- Logo image source in README.
+
 ## [0.1.1] - 2026-03-15
 
 ### Added
@@ -26,4 +44,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Model serialization via joblib with save/load utilities.
 - Cross-validation, grid search, and hyperparameter tuning support.
 
+[0.1.2]: https://github.com/tuiml/tuiml/releases/tag/v0.1.2
 [0.1.1]: https://github.com/tuiml/tuiml/releases/tag/v0.1.1

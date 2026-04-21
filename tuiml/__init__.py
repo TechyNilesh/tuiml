@@ -32,7 +32,7 @@ from tuiml.api import (
 # Mid-level API
 from tuiml.workflow import Workflow, WorkflowResult
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     # Core registry

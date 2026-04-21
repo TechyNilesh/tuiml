@@ -204,7 +204,7 @@ PYBIND11_MODULE(_cpp_ext, m) {
     m.def("set_num_threads", &tuiml::set_num_threads,
           py::arg("n"), "Set number of OpenMP threads.");
 
-    m.attr("__version__") = "0.1.1";
+    m.attr("__version__") = "0.1.2";
 
 #ifdef TUIML_USE_OPENMP
     m.attr("has_openmp") = true;
