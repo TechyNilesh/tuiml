@@ -1166,6 +1166,119 @@ WORKFLOW_TOOLS = {
             },
         },
     },
+    "tuiml_algorithm_skeleton": {
+        "name": "tuiml_algorithm_skeleton",
+        "description": (
+            "Return a ready-to-edit Python source template for a new @classifier "
+            "or @regressor class. Agents should call this, fill in fit() and "
+            "predict(), then pass the completed source to tuiml_create_algorithm. "
+            "Feature-gated: requires env TUIML_ALLOW_USER_ALGORITHMS=1."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["classifier", "regressor"],
+                    "description": "Task kind the new algorithm targets.",
+                },
+                "class_name": {
+                    "type": "string",
+                    "description": "Python identifier for the new class, e.g. 'MyGradientBoosting'.",
+                    "default": "MyAlgorithm",
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Initial semver, e.g. '1.0.0'.",
+                    "default": "1.0.0",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One-line docstring for the class.",
+                    "default": "Describe what your algorithm does.",
+                },
+            },
+            "required": ["kind"],
+        },
+    },
+    "tuiml_create_algorithm": {
+        "name": "tuiml_create_algorithm",
+        "description": (
+            "Persist, validate, and register a new agent-authored algorithm. "
+            "The source is AST-validated (forbidden modules: subprocess, socket, "
+            "os, urllib, requests, …; forbidden calls: eval, exec, open, __import__) "
+            "and saved to ~/.tuiml/user_algorithms/<name>/<version>/algorithm.py. "
+            "After registration, the algorithm is available via its class name to "
+            "every existing MCP tool (tuiml_train, tuiml_experiment, tuiml_describe). "
+            "Each version is also registered under a pinned alias "
+            "<ClassName>_v<major>_<minor>_<patch> so you can A/B compare versions "
+            "inside a single tuiml_experiment. "
+            "Feature-gated: requires env TUIML_ALLOW_USER_ALGORITHMS=1."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Directory name — usually equal to the class name (Python identifier).",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["classifier", "regressor"],
+                    "description": "Task kind. Must match the imported class's base type.",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Full Python source. Must define exactly one @classifier or @regressor class.",
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Semver for this submission, e.g. '1.0.0', '1.0.1'.",
+                    "default": "1.0.0",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional short description (falls back to the class docstring).",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Overwrite an existing file at <name>/<version>/. Bump the version instead when possible.",
+                    "default": False,
+                },
+            },
+            "required": ["name", "kind", "code"],
+        },
+    },
+    "tuiml_list_user_algorithms": {
+        "name": "tuiml_list_user_algorithms",
+        "description": (
+            "List every agent-authored algorithm on disk with its version, "
+            "kind, description, source hash, and pinned alias. Use this before "
+            "running comparison experiments so the agent knows which pinned "
+            "aliases exist for A/B tests."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    "tuiml_delete_user_algorithm": {
+        "name": "tuiml_delete_user_algorithm",
+        "description": (
+            "Delete a user algorithm from disk. Pass only `name` to remove every "
+            "version; pass both to remove a single version. Registry entries for "
+            "already-loaded classes remain until the MCP server restarts. "
+            "Feature-gated: requires env TUIML_ALLOW_USER_ALGORITHMS=1."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "version": {
+                    "type": "string",
+                    "description": "If omitted, all versions are removed.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
     "tuiml_self_update": {
         "name": "tuiml_self_update",
         "description": (
@@ -3229,6 +3342,45 @@ def execute_read_data(**kwargs) -> Dict[str, Any]:
         }
 
 
+def execute_algorithm_skeleton(**kwargs) -> Dict[str, Any]:
+    from tuiml.llm import user_algorithms
+    return user_algorithms.skeleton(
+        kind=kwargs.get("kind", "classifier"),
+        class_name=kwargs.get("class_name", "MyAlgorithm"),
+        version=kwargs.get("version", "1.0.0"),
+        description=kwargs.get("description", "Describe what your algorithm does."),
+    )
+
+
+def execute_create_algorithm(**kwargs) -> Dict[str, Any]:
+    from tuiml.llm import user_algorithms
+    required = [k for k in ("name", "kind", "code") if k not in kwargs]
+    if required:
+        return {"status": "error", "error_type": "ValueError",
+                "error": f"missing required fields: {', '.join(required)}"}
+    return user_algorithms.create(
+        name=kwargs["name"],
+        kind=kwargs["kind"],
+        code=kwargs["code"],
+        version=kwargs.get("version", "1.0.0"),
+        description=kwargs.get("description"),
+        force=bool(kwargs.get("force", False)),
+    )
+
+
+def execute_list_user_algorithms(**kwargs) -> Dict[str, Any]:
+    from tuiml.llm import user_algorithms
+    return user_algorithms.list_all()
+
+
+def execute_delete_user_algorithm(**kwargs) -> Dict[str, Any]:
+    from tuiml.llm import user_algorithms
+    if "name" not in kwargs:
+        return {"status": "error", "error_type": "ValueError",
+                "error": "missing required field: name"}
+    return user_algorithms.delete(name=kwargs["name"], version=kwargs.get("version"))
+
+
 def _detect_install_method() -> Dict[str, Any]:
     """Inspect sys.prefix / sys.executable to guess how tuiml was installed."""
     import sys
@@ -3411,7 +3563,29 @@ TOOL_EXECUTORS = {
     "tuiml_read_data": execute_read_data,
     "tuiml_system_info": execute_system_info,
     "tuiml_self_update": execute_self_update,
+    "tuiml_algorithm_skeleton": execute_algorithm_skeleton,
+    "tuiml_create_algorithm": execute_create_algorithm,
+    "tuiml_list_user_algorithms": execute_list_user_algorithms,
+    "tuiml_delete_user_algorithm": execute_delete_user_algorithm,
 }
+
+
+# Bootstrap: re-register agent-authored algorithms from disk so they survive
+# MCP server restarts. Gated by TUIML_ALLOW_USER_ALGORITHMS.
+try:
+    from tuiml.llm import user_algorithms as _user_algorithms
+    _bootstrap_result = _user_algorithms.load_all()
+    if _bootstrap_result.get("loaded"):
+        import sys as _sys
+        print(f"[tuiml] loaded {_bootstrap_result['loaded']} user algorithm(s)",
+              file=_sys.stderr)
+    if _bootstrap_result.get("errors"):
+        import sys as _sys
+        for err in _bootstrap_result["errors"]:
+            print(f"[tuiml] user algorithm load error: {err}", file=_sys.stderr)
+except Exception as _e:  # never block the server on bootstrap failures
+    import sys as _sys
+    print(f"[tuiml] user-algorithm bootstrap failed: {_e}", file=_sys.stderr)
 
 def get_tool_output_schema(tool_name: str) -> Dict[str, Any]:
     """Get output schema for a tool."""
