@@ -6,6 +6,7 @@ to perform complete ML workflows.
 """
 
 from typing import Dict, List, Any, Optional
+from pathlib import Path
 import json
 import os
 import uuid
@@ -1144,6 +1145,53 @@ WORKFLOW_TOOLS = {
             },
             "required": ["data"]
         }
+    },
+    "tuiml_system_info": {
+        "name": "tuiml_system_info",
+        "description": (
+            "Report details about the TuiML installation on this machine: "
+            "installed version, install method (uv tool / pip / editable), "
+            "package location, Python executable, platform, and the latest "
+            "version available on PyPI. Agents can use this to decide whether "
+            "an update is worth running via tuiml_self_update."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "check_latest": {
+                    "type": "boolean",
+                    "description": "Query PyPI for the latest released version. Defaults to true.",
+                    "default": True,
+                }
+            },
+        },
+    },
+    "tuiml_self_update": {
+        "name": "tuiml_self_update",
+        "description": (
+            "Upgrade the TuiML installation to the latest PyPI release. "
+            "Auto-detects the installer (uv tool install vs pip) and runs the "
+            "appropriate upgrade command. Returns the command, its stdout / "
+            "stderr, and the resulting version. Editable / dev installs are "
+            "refused — those need a git pull instead.\n\n"
+            "IMPORTANT: the running MCP process is still using the old package "
+            "in memory. The client (Claude Desktop, Cursor, etc.) must be "
+            "restarted for the new version to take effect."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Print the command that would be run without executing it.",
+                    "default": False,
+                },
+                "target_version": {
+                    "type": "string",
+                    "description": "Upgrade to a specific version (e.g. '0.1.3'). Defaults to latest.",
+                },
+            },
+        },
     },
 }
 
@@ -3181,6 +3229,161 @@ def execute_read_data(**kwargs) -> Dict[str, Any]:
         }
 
 
+def _detect_install_method() -> Dict[str, Any]:
+    """Inspect sys.prefix / sys.executable to guess how tuiml was installed."""
+    import sys
+    # Don't resolve() — that follows the python symlink out of the tool venv.
+    prefix = sys.prefix.replace("\\", "/")
+    exe = sys.executable.replace("\\", "/")
+
+    # Editable install wins over path-matching: check first so a dev checkout
+    # imported into any venv is still reported as editable-dev.
+    try:
+        import tuiml as _pkg
+        pkg_dir = Path(_pkg.__file__).resolve().parent
+        if (pkg_dir.parent / "pyproject.toml").exists():
+            return {"method": "editable-dev", "writable": False,
+                    "upgrade_hint": "cd <checkout> && git pull"}
+    except Exception:
+        pass
+
+    # uv tool install puts the venv under .../uv/tools/tuiml/
+    if "/uv/tools/tuiml" in prefix or "/uv/tools/tuiml" in exe:
+        return {"method": "uv-tool", "writable": True,
+                "upgrade_hint": "uv tool install --reinstall --force tuiml"}
+
+    # Default: assume pip / uv pip
+    return {"method": "pip", "writable": True,
+            "upgrade_hint": f"{sys.executable} -m pip install --upgrade tuiml"}
+
+
+def _query_latest_pypi_version(package: str = "tuiml", timeout: float = 5.0) -> Dict[str, Any]:
+    """Look up the latest released version of a package on PyPI."""
+    import json as _json
+    import urllib.request
+    url = f"https://pypi.org/pypi/{package}/json"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        return {"ok": True, "version": data["info"]["version"],
+                "released": data["releases"].get(data["info"]["version"], [{}])[0].get("upload_time")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def execute_system_info(**kwargs) -> Dict[str, Any]:
+    """Report installation details for the running TuiML install."""
+    import sys
+    import platform as _plat
+    try:
+        import tuiml as _pkg
+        pkg_dir = Path(_pkg.__file__).resolve().parent
+        version = getattr(_pkg, "__version__", "unknown")
+    except Exception as e:
+        return {"status": "error", "error": f"cannot import tuiml: {e}",
+                "error_type": type(e).__name__}
+
+    install = _detect_install_method()
+    result: Dict[str, Any] = {
+        "status": "success",
+        "version": version,
+        "install_method": install["method"],
+        "upgrade_hint": install["upgrade_hint"],
+        "package_path": str(pkg_dir),
+        "site_packages": str(pkg_dir.parent),
+        "python_executable": sys.executable,
+        "python_version": sys.version.split()[0],
+        "platform": _plat.platform(),
+    }
+
+    if kwargs.get("check_latest", True):
+        pypi = _query_latest_pypi_version()
+        if pypi["ok"]:
+            latest = pypi["version"]
+            result["latest_version"] = latest
+            result["update_available"] = (latest != version)
+            if pypi.get("released"):
+                result["latest_released"] = pypi["released"]
+        else:
+            result["latest_version_error"] = pypi["error"]
+
+    return result
+
+
+def execute_self_update(**kwargs) -> Dict[str, Any]:
+    """Upgrade tuiml to the latest PyPI version using the detected installer."""
+    import subprocess
+    import sys
+
+    install = _detect_install_method()
+    method = install["method"]
+
+    if method == "editable-dev":
+        return {
+            "status": "error",
+            "error": "refusing to upgrade an editable / dev checkout — run `git pull` in the source tree instead",
+            "error_type": "EditableInstallError",
+            "install_method": method,
+        }
+
+    target = kwargs.get("target_version")
+    spec = f"tuiml=={target}" if target else "tuiml"
+
+    if method == "uv-tool":
+        cmd = ["uv", "tool", "install", "--reinstall", "--force", spec]
+    else:  # pip
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", spec]
+
+    if kwargs.get("dry_run"):
+        return {
+            "status": "success",
+            "dry_run": True,
+            "install_method": method,
+            "command": cmd,
+            "note": "no changes made; set dry_run=false to actually run",
+        }
+
+    try:
+        before = execute_system_info(check_latest=False).get("version")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "upgrade timed out after 300s",
+                "error_type": "TimeoutExpired", "command": cmd}
+    except FileNotFoundError as e:
+        return {"status": "error",
+                "error": f"installer not found on PATH: {e.filename or str(e)}",
+                "error_type": "FileNotFoundError", "command": cmd}
+
+    # After upgrade the on-disk package has changed, but the running process is
+    # still holding the old module objects. Re-reading the installed version
+    # requires a subprocess.
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib, importlib.metadata as m; "
+             "importlib.invalidate_caches(); "
+             "print(m.version('tuiml'))"],
+            capture_output=True, text=True, timeout=15,
+        )
+        after = probe.stdout.strip() or None
+    except Exception:
+        after = None
+
+    ok = (proc.returncode == 0)
+    return {
+        "status": "success" if ok else "error",
+        "install_method": method,
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[-4000:],
+        "stderr": proc.stderr[-4000:],
+        "version_before": before,
+        "version_after": after,
+        "restart_required": ok,
+        "note": "Restart the MCP client (Claude Desktop, Cursor, etc.) to load the new version.",
+    }
+
+
 # =============================================================================
 # Tool Registry
 # =============================================================================
@@ -3206,6 +3409,8 @@ TOOL_EXECUTORS = {
     "tuiml_statistical_test": execute_statistical_test,
     "tuiml_tune": execute_tune,
     "tuiml_read_data": execute_read_data,
+    "tuiml_system_info": execute_system_info,
+    "tuiml_self_update": execute_self_update,
 }
 
 def get_tool_output_schema(tool_name: str) -> Dict[str, Any]:
