@@ -1,8 +1,8 @@
 ---
 name: TuiML ML
 description: Machine learning toolkit - train, evaluate, and compare models using 200+ algorithms, preprocessors, and datasets
-version: 2.2.0
-mcp_server: python -m tuiml.llm.server
+version: 0.1.2
+mcp_server: tuiml-mcp
 ---
 
 # TuiML Framework Guide
@@ -15,8 +15,38 @@ TuiML is a Python ML framework with 200+ components across algorithms, preproces
 
 ### Install
 
+One-liner (recommended — installs `uv` if missing, pulls the latest TuiML from GitHub, builds C++ extensions):
+
 ```bash
-pip install tuiml
+curl -fsSL https://tuiml.ai/install.sh | bash
+```
+
+Alternatives:
+
+```bash
+uv tool install tuiml        # isolated tool venv (recommended if uv is already installed)
+pip install tuiml            # inside any existing Python environment
+```
+
+### Wire TuiML into your AI client
+
+```bash
+tuiml setup          # opens an Auto / Manual / Quit menu — default Auto
+tuiml setup -y       # skip the menu and configure every detected client
+tuiml setup --manual # prompt per-client (old one-by-one behaviour)
+tuiml setup --list   # just show what's detected without writing anything
+```
+
+Detects Claude Desktop, Claude Code (skill file), OpenClaw, Cursor, ChatGPT Desktop, Perplexity Desktop, Codex CLI, Zed, Continue (VS Code), VS Code Copilot, Windsurf, and Goose.
+
+### Update / uninstall
+
+```bash
+tuiml self_update         # via the MCP tool — tells the agent `restart_required: true`
+uv tool install --reinstall --force tuiml   # from the shell
+tuiml uninstall           # remove TuiML from every wired AI client
+                          # (does NOT remove the Python package itself)
+uv tool uninstall tuiml   # finally, remove the package
 ```
 
 ### Three API Levels
@@ -706,9 +736,10 @@ tuiml experiment --models RF SVC NB --datasets iris.csv --n-folds 10
 # Serve
 tuiml serve model.pkl --port 8000
 
-# Upload to hub
-tuiml upload my_algorithm.py --type classifier
-tuiml upload my_dataset.csv --type dataset
+# Setup / uninstall (MCP-client wiring)
+tuiml setup                     # Auto/Manual menu
+tuiml setup -y                  # configure all detected clients
+tuiml uninstall                 # unwire every client
 
 # Datasets
 tuiml datasets list
@@ -718,26 +749,18 @@ tuiml datasets info iris
 
 ---
 
-## 10. Hub Integration
+## 10. Local Registry
 
 ```python
-from tuiml.hub import registry, remote, datasets, ComponentType
+from tuiml.hub import registry, ComponentType
 
-# Local registry
+# Local, in-process registry (no network calls)
 classifiers = registry.list("classifier")
 model = registry.create("RandomForestClassifier", n_estimators=100)
 exists = registry.exists("RandomForestClassifier")
-
-# Remote hub
-algorithms = remote.browse(category="classifier")
-results = remote.search("random forest")
-remote.install("community-algorithm-name")
-
-# Remote datasets
-ds_list = datasets.browse(task_type="classification")
-df = datasets.load("wine-quality")
-info = datasets.get_info("iris")
 ```
+
+The remote community hub is currently decommissioned — use agent-authored algorithms (section 11 + 13) to add algorithms to the registry at runtime instead.
 
 ---
 
@@ -745,40 +768,105 @@ info = datasets.get_info("iris")
 
 ### Setup
 
-```bash
-# Run directly
-tuiml-mcp
+Let the CLI wire every detected client for you:
 
-# Or configure in Claude Desktop (claude_desktop_config.json):
+```bash
+tuiml setup -y
+```
+
+Run the server manually (for debugging) with:
+
+```bash
+tuiml-mcp
+```
+
+If you prefer editing the client config by hand, add the following to any MCP client's `mcpServers` block (Claude Desktop, Cursor, Windsurf, ChatGPT Desktop, Perplexity Desktop, Continue):
+
+```json
 {
     "mcpServers": {
-        "tuiml": {
-            "command": "tuiml-mcp"
-        }
+        "tuiml": { "command": "tuiml-mcp" }
     }
 }
 ```
 
+OpenClaw uses the key `mcp.servers`, Zed uses `context_servers`, Codex CLI uses a TOML `[mcp_servers.tuiml]` block, and Goose takes YAML. `tuiml setup` handles all of these — the JSON above is shown for reference only.
+
 ### MCP Tools
+
+**Core workflow**
 
 | Tool | Purpose |
 |------|---------|
 | `tuiml_train` | Train any model with preprocessing and CV |
 | `tuiml_predict` | Predict using model_id or model path |
 | `tuiml_evaluate` | Evaluate model with metrics |
-| `tuiml_experiment` | Compare multiple algorithms |
+| `tuiml_experiment` | Compare multiple algorithms across datasets |
+| `tuiml_tune` | Grid or random search over hyperparameters |
+| `tuiml_statistical_test` | Friedman / Wilcoxon test on experiment results |
+
+**Data & preparation**
+
+| Tool | Purpose |
+|------|---------|
 | `tuiml_upload_data` | Upload CSV/ARFF content for other tools |
-| `tuiml_save_model` | Save trained model to custom path |
-| `tuiml_serve_model` | Start REST API for a model |
-| `tuiml_stop_server` | Stop a serving server |
-| `tuiml_server_status` | Check server status |
+| `tuiml_read_data` | Preview rows from a dataset |
+| `tuiml_data_profile` | Summary stats: shape, dtypes, missingness, cardinality |
+| `tuiml_generate_data` | Generate synthetic datasets (blobs, moons, Friedman, …) |
+| `tuiml_preprocess` | Apply preprocessors without a full workflow |
+| `tuiml_select_features` | Feature selection as a standalone step |
+| `tuiml_plot` | Standard plots (confusion matrix, ROC, PCA, …) |
+
+**Discovery**
+
+| Tool | Purpose |
+|------|---------|
 | `tuiml_list` | List components by category |
 | `tuiml_describe` | Get parameter schema for any component |
 | `tuiml_search` | Search components by keyword |
 
+**Serving**
+
+| Tool | Purpose |
+|------|---------|
+| `tuiml_save_model` | Save trained model to custom path |
+| `tuiml_serve_model` | Start REST API for a model |
+| `tuiml_stop_server` | Stop a serving server |
+| `tuiml_server_status` | Check server status |
+
+**Self-introspection & upgrade**
+
+| Tool | Purpose |
+|------|---------|
+| `tuiml_system_info` | Installed version, install method, package path, latest PyPI version, update_available flag |
+| `tuiml_self_update` | Upgrade to the latest release (auto-detects `uv tool` vs `pip`). Restart the client afterward. |
+
+**Agent-authored algorithms (requires `TUIML_ALLOW_USER_ALGORITHMS=1`)**
+
+| Tool | Purpose |
+|------|---------|
+| `tuiml_algorithm_skeleton` | Return a fill-in-the-blanks classifier/regressor template |
+| `tuiml_create_algorithm` | AST-validate and register new Python source as a named + versioned algorithm |
+| `tuiml_list_user_algorithms` | List every user algorithm and its pinned version aliases |
+| `tuiml_delete_user_algorithm` | Remove a version (or all versions) from disk |
+
 ### Auto-Discovery
 
-Any component registered with `@classifier`, `@regressor`, `@transformer`, etc. is automatically discoverable through all MCP tools. No tool definitions need updating.
+Any component registered with `@classifier`, `@regressor`, `@transformer`, etc. is automatically discoverable through all MCP tools. No tool definitions need updating. This is how agent-authored algorithms become first-class citizens of `tuiml_train` / `tuiml_experiment` the moment they are registered.
+
+### Keeping this skill fresh
+
+This `SKILL.md` is bundled with the `tuiml` package — its `version:` frontmatter matches the installed package version. Refresh workflow:
+
+```bash
+# 1. Upgrade the package (or call tuiml_self_update from the agent)
+uv tool install --reinstall --force tuiml
+
+# 2. Re-run setup to copy the bundled skill into each client's skills dir
+tuiml setup -y
+```
+
+For pure MCP clients (Claude Desktop, Cursor, OpenClaw, …) the tool schemas are fetched live from the MCP server on every connection — no skill file to refresh.
 
 ### MCP Tool Examples
 
@@ -921,6 +1009,67 @@ grid = GridSearchCV(
 grid.fit(X_train, y_train)
 best = grid.best_estimator_
 ```
+
+### Auto-Research Loop (agent-authored algorithms)
+
+**When to use:** the agent has an algorithmic idea ("what if I bag shallow decision trees with bootstrap weights proportional to label noise?") and wants to implement, run, and compare it against shipped algorithms — all without leaving the conversation.
+
+**Prerequisite:** export `TUIML_ALLOW_USER_ALGORITHMS=1` in the shell that launches the MCP server, then restart the client. Source is AST-filtered, not sandboxed — the trust model is that the agent is local.
+
+**The loop**
+
+```
+1. tuiml_algorithm_skeleton(kind="classifier")        →  template source
+2. <edit fit() / predict() / __init__ hyperparams>
+3. tuiml_create_algorithm(name="NoisyTreeBag",
+                          kind="classifier",
+                          code=<edited source>,
+                          version="1.0.0")
+   →  registered as NoisyTreeBag (latest)
+                 and NoisyTreeBag_v1_0_0 (pinned)
+
+4. tuiml_train(algorithm="NoisyTreeBag",
+               data="iris", target="target", cv=5)
+   →  baseline score
+
+5. <iterate: tweak hyperparameters, rewrite>
+6. tuiml_create_algorithm(name="NoisyTreeBag",
+                          code=<new source>, version="1.0.1")
+   →  NoisyTreeBag (latest now v1.0.1)
+                 and NoisyTreeBag_v1_0_1 (pinned)
+
+7. tuiml_experiment(
+      algorithms=["NoisyTreeBag_v1_0_0",
+                  "NoisyTreeBag_v1_0_1",
+                  "RandomForestClassifier",
+                  "XGBoostClassifier"],
+      data=["iris", "wine", "breast_cancer"],
+      target="target", cv=10,
+      metrics=["accuracy_score", "f1_score"])
+   →  ranked comparison with mean ± std per dataset
+
+8. tuiml_statistical_test(
+      results=<experiment output>,
+      test="friedman",  post_hoc="nemenyi")
+   →  tells you whether your variant is significantly better
+```
+
+**Versioning rules**
+
+- `name` must be a valid Python identifier — usually equal to the class name.
+- `version` must be semver (`MAJOR.MINOR.PATCH`). Bump it on every change.
+- Every version is kept on disk at `~/.tuiml/user_algorithms/<name>/<version>/algorithm.py` with a `metadata.json` next to it (class name, kind, source hash, description). Nothing is deleted until `tuiml_delete_user_algorithm` is called.
+- The bare class name (`NoisyTreeBag`) always resolves to the most recently registered version. Pinned aliases (`NoisyTreeBag_v1_0_0`) resolve to exact versions — use these when comparing variants in one `tuiml_experiment`.
+- All versions are re-registered at MCP server startup, so agent work survives restarts.
+
+**Guardrails enforced by `tuiml_create_algorithm`**
+
+- Forbidden imports: `subprocess`, `socket`, `os`, `shutil`, `urllib`, `requests`, `httpx`, `http`, `ftplib`, `smtplib`, `ctypes`, `webbrowser`, `pty`.
+- Forbidden calls: `eval`, `exec`, `compile`, `__import__`, `open`, `input`.
+- Must contain at least one `@classifier` or `@regressor` decorated class.
+- Declared `kind` must match the base class of the imported class.
+
+Any rejection returns `status: error, error_type: UnsafeSource` with the specific rule that fired. Bump the version instead of overwriting when you want to keep the history.
 
 ### Model Comparison with Statistical Testing
 
