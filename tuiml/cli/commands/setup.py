@@ -112,6 +112,30 @@ def client_specs() -> list[dict]:
             "detect": HOME / ".openclaw",
             "config": HOME / ".openclaw" / "openclaw.json",
         },
+        # ----- NVIDIA NemoClaw ---------------------------------------------
+        # NemoClaw runs OpenClaw inside a sandboxed Docker container via
+        # OpenShell. The host `~/.nemoclaw/` directory only holds sandbox
+        # metadata (sandboxes.json, onboard-session.json) — the real OpenClaw
+        # config with `mcp.servers` lives INSIDE the sandbox. We can detect
+        # NemoClaw, but wiring must happen from inside the sandbox shell.
+        {
+            "id": "nemoclaw",
+            "name": "NemoClaw (NVIDIA)",
+            "kind": "instructions",
+            "detect": HOME / ".nemoclaw",
+            "config": HOME / ".nemoclaw" / "sandboxes.json",
+            "instructions": (
+                "NemoClaw runs OpenClaw inside a sandboxed Docker container,\n"
+                "so its OpenClaw MCP config is not reachable from the host.\n"
+                "To wire TuiML into a NemoClaw sandbox:\n"
+                "  1. Enter the sandbox shell:\n"
+                "       nemoclaw <sandbox-name> shell\n"
+                "  2. Install TuiML inside the sandbox:\n"
+                "       curl -fsSL https://tuiml.ai/install.sh | bash\n"
+                "  3. Configure OpenClaw from inside the sandbox:\n"
+                "       tuiml setup --client openclaw -y"
+            ),
+        },
         # ----- Claude Desktop ----------------------------------------------
         {
             "id": "claude-desktop",
@@ -351,6 +375,18 @@ def print_yaml_instructions(spec: dict) -> tuple[bool, str]:
     return False, "manual step (YAML config not auto-edited)"
 
 
+def print_instructions(spec: dict) -> tuple[bool, str]:
+    """Print client-specific setup instructions (no config file edited).
+
+    Used for clients that cannot be safely auto-wired from the host — e.g.,
+    NemoClaw whose OpenClaw config lives inside a Docker sandbox.
+    """
+    text = spec.get("instructions", "")
+    for line in text.splitlines():
+        click.echo(f"    {line}")
+    return False, "manual step (config lives outside the host — see instructions)"
+
+
 # ---------------------------------------------------------------------------
 # Per-client dispatcher
 # ---------------------------------------------------------------------------
@@ -367,6 +403,8 @@ def configure(spec: dict) -> tuple[bool, str]:
         return install_skill_file(spec["skills_dir"])
     if kind == "yaml-instructions":
         return print_yaml_instructions(spec)
+    if kind == "instructions":
+        return print_instructions(spec)
     return False, f"unknown client kind: {kind}"
 
 

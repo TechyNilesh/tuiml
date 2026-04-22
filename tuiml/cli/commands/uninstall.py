@@ -114,6 +114,9 @@ def unconfigure(spec: dict) -> tuple[bool, str]:
         return remove_skill_dir(spec["skills_dir"])
     if kind == "yaml-instructions":
         return print_yaml_instructions(spec)
+    if kind == "instructions":
+        info(f"  {spec['name']} wiring lives outside the host (see `tuiml setup` instructions). Skipped.")
+        return False, "manual step (config lives outside the host)"
     return False, f"unknown client kind: {kind}"
 
 
