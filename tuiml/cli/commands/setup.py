@@ -383,24 +383,41 @@ def describe_target(spec: dict) -> str:
 ALL_CLIENT_IDS = [c["id"] for c in client_specs()]
 
 
+def prompt_mode(default: str = "auto") -> str:
+    """Ask the user whether to configure all detected clients at once or one by one."""
+    click.echo()
+    click.echo(f"  {C.BOLD}Mode:{C.RESET}")
+    click.echo(f"    [{C.GREEN}a{C.RESET}] Auto   — configure every detected client")
+    click.echo(f"    [{C.YELLOW}m{C.RESET}] Manual — ask for each client individually")
+    click.echo(f"    [{C.DIM}q{C.RESET}] Quit")
+    choice = click.prompt("  Choose", default=default, show_default=True).strip().lower()
+    if choice.startswith("q"):
+        return "quit"
+    if choice.startswith("m"):
+        return "manual"
+    return "auto"
+
+
 @click.command("setup")
 @click.option("--yes", "-y", "assume_yes", is_flag=True,
-              help="Skip prompts and configure all detected clients.")
+              help="Auto mode: configure every detected client without prompting.")
+@click.option("--manual", "force_manual", is_flag=True,
+              help="Manual mode: ask per-client (skip the Auto/Manual menu).")
 @click.option("--list", "list_only", is_flag=True,
               help="List detected clients without making any changes.")
 @click.option("--client", "clients", multiple=True,
               help="Configure only the specified client(s). Repeatable. "
                    "Run 'tuiml setup --list' to see valid IDs.")
-def setup(assume_yes: bool, list_only: bool, clients: tuple[str, ...]) -> None:
+def setup(assume_yes: bool, force_manual: bool, list_only: bool, clients: tuple[str, ...]) -> None:
     """Connect TuiML to your AI agents.
 
     Detects installed clients and wires them up: appends an MCP server entry
     for MCP clients, copies the SKILL.md file for skill-based agents, or
     prints manual instructions for YAML/unsupported configs.
 
-    Supported clients: OpenClaw, Claude Desktop, Claude Code, ChatGPT Desktop,
-    Perplexity Desktop, Cursor, Windsurf, OpenAI Codex CLI, Zed,
-    Continue (VS Code), VS Code (Copilot), Goose.
+    By default the wizard asks whether to configure every detected client at
+    once (Auto) or one by one (Manual). Pass ``-y`` / ``--yes`` to skip the
+    menu and go straight to Auto, or ``--manual`` to go straight to Manual.
     """
     banner()
 
@@ -437,10 +454,25 @@ def setup(assume_yes: bool, list_only: bool, clients: tuple[str, ...]) -> None:
             error("None of the specified clients were detected on this machine.")
             sys.exit(1)
 
+    # Decide mode: auto (configure all) vs manual (prompt per client)
+    if assume_yes:
+        mode = "auto"
+    elif force_manual:
+        mode = "manual"
+    else:
+        mode = prompt_mode(default="auto")
+
+    if mode == "quit":
+        info("Cancelled — no changes made.")
+        click.echo()
+        return
+
+    auto = (mode == "auto")
+
     section("Configuration:")
     changes_made = 0
     for spec in detected:
-        if not confirm(f"Configure {spec['name']}?", default=True, assume_yes=assume_yes):
+        if not auto and not confirm(f"Configure {spec['name']}?", default=True):
             info(f"  Skipped {spec['name']}")
             continue
 
