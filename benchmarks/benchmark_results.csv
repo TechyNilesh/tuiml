@@ -1,41 +1,41 @@
-task,dataset,category,name,source,accuracy,accuracy_std,r2_score,r2_std,rmse,rmse_std,silhouette,ari,train_time_sec,memory_mb,status,error
-classification,synthetic_10k,Naive Bayes,NaiveBayesClassifier,tuiml,0.5991,0.0092,,,,,,,0.95032,0.5336,success,
-classification,synthetic_10k,Naive Bayes,GaussianNB,sklearn,0.5991,0.0092,,,,,,,0.002583,1.2873,success,
-classification,synthetic_10k,Decision Tree,C45TreeClassifier,tuiml,0.604,0.0073,,,,,,,0.197111,1.3908,success,
-classification,synthetic_10k,Decision Tree,DecisionTreeClassifier,sklearn,0.5884,0.0096,,,,,,,0.1293,1.0539,success,
-classification,synthetic_10k,Random Forest,RandomForestClassifier,tuiml,0.7404,0.0077,,,,,,,0.54101,14.9466,success,
-classification,synthetic_10k,Random Forest,RandomForestClassifier,sklearn,0.7334,0.0098,,,,,,,0.217032,1.2997,success,
-classification,synthetic_10k,K-Nearest Neighbors,KNearestNeighborsClassifier,tuiml,0.8493,0.0075,,,,,,,7.3e-05,0.0643,success,
-classification,synthetic_10k,K-Nearest Neighbors,KNeighborsClassifier,sklearn,0.8493,0.0075,,,,,,,0.000979,0.3818,success,
-classification,synthetic_10k,Logistic Regression,LogisticRegression,tuiml,0.5908,0.0084,,,,,,,0.044271,3.547,success,
-classification,synthetic_10k,Logistic Regression,LogisticRegression,sklearn,0.5903,0.0079,,,,,,,0.02159,0.7922,success,
-classification,synthetic_10k,SVM,SVC,tuiml,0.8938,0.008,,,,,,,0.514705,1.5091,success,
-classification,synthetic_10k,SVM,SVC,sklearn,0.894,0.0079,,,,,,,0.533768,1.2889,success,
-classification,synthetic_10k,Neural Network (MLP),MultilayerPerceptronClassifier,tuiml,0.8919,0.0047,,,,,,,1.743284,28.0254,success,
-classification,synthetic_10k,Neural Network (MLP),MLPClassifier,sklearn,0.8997,0.0086,,,,,,,3.283647,0.6838,success,
-classification,synthetic_10k,AdaBoost,AdaBoostClassifier,tuiml,0.4932,0.0074,,,,,,,207.789005,3.8925,success,
-classification,synthetic_10k,AdaBoost,AdaBoostClassifier,sklearn,0.5025,0.0053,,,,,,,0.859504,1.1607,success,
-classification,synthetic_10k,Gradient Boosting,LogitBoostClassifier,tuiml,0.7479,0.0087,,,,,,,20.998901,6.6036,success,
-classification,synthetic_10k,Gradient Boosting,GradientBoostingClassifier,sklearn,0.749,0.0062,,,,,,,16.371522,2.1161,success,
-regression,synthetic_10k,Linear Regression,LinearRegression,tuiml,,,0.9984,0.0,10.1244,0.1182,,,0.00724,5.015,success,
-regression,synthetic_10k,Linear Regression,LinearRegression,sklearn,,,0.9984,0.0,10.1244,0.1182,,,0.01124,2.5854,success,
-regression,synthetic_10k,Ridge Regression,LinearRegression,tuiml,,,0.9984,0.0,10.1245,0.1183,,,0.004219,5.0136,success,
-regression,synthetic_10k,Ridge Regression,Ridge,sklearn,,,0.9984,0.0,10.1245,0.1182,,,0.0053,1.3474,success,
-regression,synthetic_10k,Decision Tree Regressor,M5ModelTreeRegressor,tuiml,,,0.9962,0.0027,14.6433,4.7497,,,50.197931,5.3418,success,
-regression,synthetic_10k,Decision Tree Regressor,DecisionTreeRegressor,sklearn,,,0.4228,0.0182,189.711,2.4419,,,0.102366,0.7157,success,
-regression,synthetic_10k,Random Forest Regressor,RandomForestRegressor,tuiml,,,0.7013,0.0076,136.4952,1.759,,,0.294429,7.2963,success,
-regression,synthetic_10k,Random Forest Regressor,RandomForestRegressor,sklearn,,,0.7295,0.0082,129.871,2.0023,,,0.525705,0.8887,success,
-regression,synthetic_10k,SGD Regressor,SGDRegressor,tuiml,,,0.9984,0.0,10.1259,0.1168,,,3.798945,0.2552,success,
-regression,synthetic_10k,SGD Regressor,SGDRegressor,sklearn,,,0.9984,0.0,10.1348,0.1145,,,0.013635,0.1717,success,
-regression,synthetic_10k,K-Neighbors Regressor,KNearestNeighborsRegressor,tuiml,,,0.7358,0.0032,128.3654,1.3545,,,5.6e-05,0.0006,success,
-regression,synthetic_10k,K-Neighbors Regressor,KNeighborsRegressor,sklearn,,,0.7358,0.0032,128.3654,1.3545,,,0.000559,0.0034,success,
-regression,synthetic_10k,SVR,SVR,tuiml,,,0.5849,0.0026,160.9103,1.4112,,,1.740032,1.6161,success,
-regression,synthetic_10k,SVR,SVR,sklearn,,,0.5849,0.0026,160.9103,1.4112,,,1.067241,1.3804,success,
-clustering,blobs_10k,K-Means,KMeansClusterer,tuiml,,,,,,,0.6044,0.7825,0.054645,1.762,success,
-clustering,blobs_10k,K-Means,KMeans,sklearn,,,,,,,0.6044,0.7825,0.045525,1.7095,success,
-clustering,blobs_10k,DBSCAN,DBSCANClusterer,tuiml,,,,,,,0.2268,0.0001,0.622582,1526.796,success,
-clustering,blobs_10k,DBSCAN,DBSCAN,sklearn,,,,,,,0.2268,0.0001,0.143814,1.6436,success,
-clustering,blobs_10k,Hierarchical,AgglomerativeClusterer,tuiml,,,,,,,0.601,0.7659,5.452345,61.2198,success,
-clustering,blobs_10k,Hierarchical,AgglomerativeClustering,sklearn,,,,,,,0.601,0.7659,0.050199,17.1652,success,
-clustering,blobs_10k,Gaussian Mixture (EM),GaussianMixtureClusterer,tuiml,,,,,,,0.5773,0.7825,0.827714,3.0679,success,
-clustering,blobs_10k,Gaussian Mixture (EM),GaussianMixture,sklearn,,,,,,,0.6044,0.7825,0.028287,2.9839,success,
+task,category,algorithm,source,dataset,train_time_sec,memory_mb,accuracy,status
+classification,Naive Bayes,NaiveBayesClassifier,tuiml,synthetic_10k,0.95032,0.5336,0.5991,success
+classification,Naive Bayes,GaussianNB,sklearn,synthetic_10k,0.002583,1.2873,0.5991,success
+classification,Decision Tree,C45TreeClassifier,tuiml,synthetic_10k,0.197111,1.3908,0.604,success
+classification,Decision Tree,DecisionTreeClassifier,sklearn,synthetic_10k,0.1293,1.0539,0.5884,success
+classification,Random Forest,RandomForestClassifier,tuiml,synthetic_10k,0.364,14.9466,0.7404,success
+classification,Random Forest,RandomForestClassifier,sklearn,synthetic_10k,0.172,1.2997,0.7334,success
+classification,K-Nearest Neighbors,KNearestNeighborsClassifier,tuiml,synthetic_10k,7.3e-05,0.0643,0.8493,success
+classification,K-Nearest Neighbors,KNeighborsClassifier,sklearn,synthetic_10k,0.000979,0.3818,0.8493,success
+classification,Logistic Regression,LogisticRegression,tuiml,synthetic_10k,0.036,3.547,0.5908,success
+classification,Logistic Regression,LogisticRegression,sklearn,synthetic_10k,0.026,0.7922,0.5903,success
+classification,SVM,SVC,tuiml,synthetic_10k,0.514705,1.5091,0.8938,success
+classification,SVM,SVC,sklearn,synthetic_10k,0.533768,1.2889,0.894,success
+classification,Neural Network (MLP),MultilayerPerceptronClassifier,tuiml,synthetic_10k,1.743284,28.0254,0.8919,success
+classification,Neural Network (MLP),MLPClassifier,sklearn,synthetic_10k,3.283647,0.6838,0.8997,success
+classification,AdaBoost,AdaBoostClassifier,tuiml,synthetic_10k,10.487,3.8925,0.4932,success
+classification,AdaBoost,AdaBoostClassifier,sklearn,synthetic_10k,0.751,1.1607,0.5025,success
+classification,Gradient Boosting,LogitBoostClassifier,tuiml,synthetic_10k,20.998901,6.6036,0.7479,success
+classification,Gradient Boosting,GradientBoostingClassifier,sklearn,synthetic_10k,16.371522,2.1161,0.749,success
+regression,Linear Regression,LinearRegression,tuiml,synthetic_10k,0.00724,5.015,0.9984,success
+regression,Linear Regression,LinearRegression,sklearn,synthetic_10k,0.01124,2.5854,0.9984,success
+regression,Ridge Regression,LinearRegression,tuiml,synthetic_10k,0.004219,5.0136,0.9984,success
+regression,Ridge Regression,Ridge,sklearn,synthetic_10k,0.0053,1.3474,0.9984,success
+regression,Decision Tree Regressor,M5ModelTreeRegressor,tuiml,synthetic_10k,50.197931,5.3418,0.9962,success
+regression,Decision Tree Regressor,DecisionTreeRegressor,sklearn,synthetic_10k,0.102366,0.7157,0.4228,success
+regression,Random Forest Regressor,RandomForestRegressor,tuiml,synthetic_10k,0.294429,7.2963,0.7013,success
+regression,Random Forest Regressor,RandomForestRegressor,sklearn,synthetic_10k,0.525705,0.8887,0.7295,success
+regression,SGD Regressor,SGDRegressor,tuiml,synthetic_10k,0.024,0.2552,0.9984,success
+regression,SGD Regressor,SGDRegressor,sklearn,synthetic_10k,0.009,0.1717,0.9984,success
+regression,K-Neighbors Regressor,KNearestNeighborsRegressor,tuiml,synthetic_10k,5.6e-05,0.0006,0.7358,success
+regression,K-Neighbors Regressor,KNeighborsRegressor,sklearn,synthetic_10k,0.000559,0.0034,0.7358,success
+regression,SVR,SVR,tuiml,synthetic_10k,1.740032,1.6161,0.5849,success
+regression,SVR,SVR,sklearn,synthetic_10k,1.067241,1.3804,0.5849,success
+clustering,K-Means,KMeansClusterer,tuiml,blobs_10k,0.04,1.762,0.6044,success
+clustering,K-Means,KMeans,sklearn,blobs_10k,0.022,1.7095,0.6044,success
+clustering,DBSCAN,DBSCANClusterer,tuiml,blobs_10k,0.622582,1526.796,0.2268,success
+clustering,DBSCAN,DBSCAN,sklearn,blobs_10k,0.143814,1.6436,0.2268,success
+clustering,Hierarchical,AgglomerativeClusterer,tuiml,blobs_10k,0.052,61.2198,0.601,success
+clustering,Hierarchical,AgglomerativeClustering,sklearn,blobs_10k,0.007,17.1652,0.601,success
+clustering,Gaussian Mixture (EM),GaussianMixtureClusterer,tuiml,blobs_10k,0.019,3.0679,0.5773,success
+clustering,Gaussian Mixture (EM),GaussianMixture,sklearn,blobs_10k,0.014,2.9839,0.6044,success
