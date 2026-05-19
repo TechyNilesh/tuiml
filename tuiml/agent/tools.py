@@ -291,7 +291,7 @@ OUTPUT_SCHEMAS = {
         },
         "required": ["status"]
     },
-    "tuiml_data_profile": {
+    "tuiml_profile_data": {
         "type": "object",
         "properties": {
             "status": {"type": "string", "enum": ["success", "error"]},
@@ -349,7 +349,7 @@ OUTPUT_SCHEMAS = {
         },
         "required": ["status"]
     },
-    "tuiml_statistical_test": {
+    "tuiml_test_statistics": {
         "type": "object",
         "properties": {
             "status": {"type": "string", "enum": ["success", "error"]},
@@ -818,8 +818,8 @@ WORKFLOW_TOOLS = {
         }
     },
 
-    "tuiml_data_profile": {
-        "name": "tuiml_data_profile",
+    "tuiml_profile_data": {
+        "name": "tuiml_profile_data",
         "description": (
             "Inspect a dataset before training — shape, dtypes, missing values, "
             "basic statistics, and class distribution. Works with file paths or "
@@ -985,8 +985,8 @@ WORKFLOW_TOOLS = {
         }
     },
 
-    "tuiml_statistical_test": {
-        "name": "tuiml_statistical_test",
+    "tuiml_test_statistics": {
+        "name": "tuiml_test_statistics",
         "description": (
             "Run statistical significance tests on experiment results (cross-validation scores). "
             "Supports Friedman test, Nemenyi post-hoc, Wilcoxon signed-rank, paired t-test, "
@@ -1166,8 +1166,8 @@ WORKFLOW_TOOLS = {
             },
         },
     },
-    "tuiml_algorithm_skeleton": {
-        "name": "tuiml_algorithm_skeleton",
+    "tuiml_get_skeleton": {
+        "name": "tuiml_get_skeleton",
         "description": (
             "Return a ready-to-edit Python source template for a new @classifier "
             "or @regressor class. Agents should call this, fill in fit() and "
@@ -1249,41 +1249,8 @@ WORKFLOW_TOOLS = {
             "required": ["name", "kind", "code"],
         },
     },
-    "tuiml_list_user_algorithms": {
-        "name": "tuiml_list_user_algorithms",
-        "description": (
-            "List every agent-authored algorithm on disk with its version, "
-            "kind, description, source hash, and pinned alias. Use this before "
-            "running comparison experiments so the agent knows which pinned "
-            "aliases exist for A/B tests."
-        ),
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    "tuiml_research_log": {
-        "name": "tuiml_research_log",
-        "description": (
-            "Return the aggregated research history for user-authored "
-            "algorithms. Combines metadata.json (class, kind, version, source "
-            "hash) with runs.jsonl (every tuiml_experiment run that referenced "
-            "this algorithm) and computes best primary score per version, run "
-            "count, and most recent run timestamp. Pass `name` to scope to one "
-            "algorithm; omit it to get every user algorithm on disk. "
-            "This is the typed artifact behind the landing-page research log: "
-            "every tuiml_experiment call automatically appends an entry, so "
-            "the log is up to date without any extra work from the agent."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Scope to a single user algorithm by directory name. Omit to list all.",
-                },
-            },
-        },
-    },
-    "tuiml_delete_user_algorithm": {
-        "name": "tuiml_delete_user_algorithm",
+    "tuiml_delete_algorithm": {
+        "name": "tuiml_delete_algorithm",
         "description": (
             "Delete a user algorithm from disk. Pass only `name` to remove every "
             "version; pass both to remove a single version. Registry entries for "
@@ -1362,8 +1329,8 @@ CODE_TOOLS = {
             "required": ["name"],
         },
     },
-    "tuiml_list_algorithm_files": {
-        "name": "tuiml_list_algorithm_files",
+    "tuiml_list_files": {
+        "name": "tuiml_list_files",
         "description": (
             "List all algorithm source files — built-in and/or user-authored. "
             "Returns file paths, categories, and metadata. Use this before "
@@ -1465,37 +1432,48 @@ CODE_TOOLS = {
 DISCOVERY_TOOLS = {
     "tuiml_list": {
         "name": "tuiml_list",
-        "description": "List all available TuiML components (algorithms, preprocessors, datasets, features).",
+        "description": (
+            "List TuiML components (algorithms, preprocessors, datasets, features) "
+            "or custom user-authored algorithms. Use category='custom' to list "
+            "algorithms created via tuiml_create_algorithm — shows all versions, "
+            "best scores, and run history. Pass include_runs=true for full experiment "
+            "history (useful for auto-research: see what was tried and what to improve next)."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "category": {
                     "type": "string",
-                    "enum": ["algorithm", "preprocessing", "dataset", "feature", "splitting", "all"],
+                    "enum": ["algorithm", "preprocessing", "dataset", "feature", "splitting", "custom", "all"],
                     "default": "all",
-                    "description": "Category to list"
+                    "description": "Category to list. Use 'custom' for user-authored algorithms."
                 },
                 "type": {
                     "type": "string",
                     "enum": ["classifier", "regressor", "clusterer", "anomaly", "timeseries"],
-                    "description": "Filter algorithms by type. 'anomaly' and 'timeseries' filter by tags within classifiers/regressors."
+                    "description": "Filter algorithms by type (ignored for category='custom')."
                 },
                 "search": {
                     "type": "string",
-                    "description": "Search keyword"
+                    "description": "Search keyword to filter results."
+                },
+                "include_runs": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "For category='custom': include full experiment run history and best scores per version."
                 },
                 "limit": {
                     "type": "integer",
                     "default": 50,
                     "minimum": 1,
                     "maximum": 200,
-                    "description": "Maximum number of results to return (default: 50)"
+                    "description": "Maximum number of results to return (default: 50)."
                 },
                 "offset": {
                     "type": "integer",
                     "default": 0,
                     "minimum": 0,
-                    "description": "Number of results to skip (default: 0)"
+                    "description": "Number of results to skip for pagination."
                 }
             },
             "required": []
@@ -1517,26 +1495,6 @@ DISCOVERY_TOOLS = {
         }
     },
 
-    "tuiml_search": {
-        "name": "tuiml_search",
-        "description": "Search for components by keyword in name or description.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query"
-                },
-                "category": {
-                    "type": "string",
-                    "enum": ["algorithm", "preprocessing", "dataset", "feature", "all"],
-                    "default": "all",
-                    "description": "Category to search"
-                }
-            },
-            "required": ["query"]
-        }
-    }
 }
 
 # =============================================================================
@@ -2017,6 +1975,36 @@ def execute_list(**kwargs) -> Dict[str, Any]:
         algo_type = kwargs.get('type')
         limit = kwargs.get('limit', 50)
         offset = kwargs.get('offset', 0)
+        include_runs = bool(kwargs.get('include_runs', False))
+
+        # category='custom' — delegate to user_algorithms (absorbs tuiml_list_user_algorithms
+        # and tuiml_research_log)
+        if category == 'custom':
+            from tuiml.agent import user_algorithms
+            result = user_algorithms.research_log()
+            if result.get('status') != 'success':
+                return result
+            algorithms = result.get('algorithms', [])
+            if search:
+                algorithms = [a for a in algorithms if search.lower() in a['name'].lower()]
+            total = len(algorithms)
+            paginated = algorithms[offset:offset + limit]
+            if not include_runs:
+                # Strip run details for a fast listing — keep versions + best scores
+                for alg in paginated:
+                    for v in alg.get('versions', []):
+                        v.pop('path', None)
+            return {
+                'status': 'success',
+                'category': 'custom',
+                'total': total,
+                'count': len(paginated),
+                'limit': limit,
+                'offset': offset,
+                'has_more': (offset + limit) < total,
+                'algorithms': paginated,
+                'hint': "Use tuiml_train or tuiml_experiment with any class_name or versioned_alias shown above.",
+            }
 
         if category == 'all':
             tools = get_all_tools()
@@ -3771,24 +3759,21 @@ TOOL_EXECUTORS = {
     "tuiml_server_status": execute_server_status,
     "tuiml_list": execute_list,
     "tuiml_describe": execute_describe,
-    "tuiml_search": execute_search,
     "tuiml_plot": execute_plot,
-    "tuiml_data_profile": execute_data_profile,
+    "tuiml_profile_data": execute_data_profile,
     "tuiml_generate_data": execute_generate_data,
     "tuiml_preprocess": execute_preprocess,
     "tuiml_select_features": execute_select_features,
-    "tuiml_statistical_test": execute_statistical_test,
+    "tuiml_test_statistics": execute_statistical_test,
     "tuiml_tune": execute_tune,
     "tuiml_read_data": execute_read_data,
     "tuiml_system_info": execute_system_info,
     "tuiml_self_update": execute_self_update,
-    "tuiml_algorithm_skeleton": execute_algorithm_skeleton,
+    "tuiml_get_skeleton": execute_algorithm_skeleton,
     "tuiml_create_algorithm": execute_create_algorithm,
-    "tuiml_list_user_algorithms": execute_list_user_algorithms,
-    "tuiml_delete_user_algorithm": execute_delete_user_algorithm,
-    "tuiml_research_log": execute_research_log,
+    "tuiml_delete_algorithm": execute_delete_user_algorithm,
     "tuiml_read_algorithm": execute_read_algorithm,
-    "tuiml_list_algorithm_files": execute_list_algorithm_files,
+    "tuiml_list_files": execute_list_algorithm_files,
     "tuiml_search_source": execute_search_source,
     "tuiml_edit_algorithm": execute_edit_algorithm,
 }
@@ -3897,7 +3882,7 @@ def get_tool_annotations(tool_name: str) -> Dict[str, bool]:
             "idempotentHint": True,
             "openWorldHint": False
         },
-        "tuiml_data_profile": {
+        "tuiml_profile_data": {
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
@@ -3921,7 +3906,7 @@ def get_tool_annotations(tool_name: str) -> Dict[str, bool]:
             "idempotentHint": False,
             "openWorldHint": False
         },
-        "tuiml_statistical_test": {
+        "tuiml_test_statistics": {
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
