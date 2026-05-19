@@ -4,6 +4,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 
 from tuiml.base.algorithms import DensityBasedClusterer, clusterer
+from tuiml._cpp_ext import clustering as _clu_cpp
 
 @clusterer(tags=["probabilistic", "gaussian-mixture"], version="1.0.0")
 class GaussianMixtureClusterer(DensityBasedClusterer):
@@ -441,33 +442,56 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
         self : GaussianMixtureClusterer
             Fitted estimator.
         """
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        rng = np.random.default_rng(self.random_state)
+        seed = self.random_state if self.random_state is not None else 0
+        result = _clu_cpp.em_fit(
+            X,
+            n_components    = self.n_components,
+            covariance_type = self.covariance_type,
+            max_iter        = self.max_iter,
+            tol             = self.tol,
+            reg_covar       = 1e-6,
+            n_init          = self.n_init,
+            random_seed     = seed,
+        )
 
-        best_log_likelihood = -np.inf
-        best_params = None
+        K = self.n_components
+        d = X.shape[1]
+        self.weights_     = np.array(result.weights)
+        self.means_       = np.array(result.means).reshape(K, d)
+        self.n_iter_      = result.n_iter
+        self.log_likelihood_ = result.log_likelihood
+        self.converged_   = True  # C++ loop exits on tol or max_iter
 
-        for _ in range(self.n_init):
-            weights, means, covs, ll, n_iter, converged = self._single_run(X, rng)
+        # Reshape covariances to match expected Python convention
+        raw_covs = np.array(result.covariances)
+        if self.covariance_type == 'full':
+            self.covariances_ = raw_covs.reshape(K, d, d)
+        elif self.covariance_type == 'diag':
+            self.covariances_ = raw_covs.reshape(K, d)
+        else:
+            self.covariances_ = raw_covs  # (K,) spherical
 
-            if ll > best_log_likelihood:
-                best_log_likelihood = ll
-                best_params = (weights, means, covs, n_iter, converged)
-
-        self.weights_, self.means_, self.covariances_, self.n_iter_, self.converged_ = best_params
-        self.log_likelihood_ = best_log_likelihood
-
-        # Assign labels
-        resp, _ = self._e_step(X)
-        self.labels_ = np.argmax(resp, axis=1)
+        labels = _clu_cpp.em_predict(
+            X,
+            self.weights_,
+            self.means_,
+            self._covs_flat(),
+            self.covariance_type,
+        )
+        self.labels_ = np.asarray(labels)
         self.n_clusters_ = self.n_components
         self.cluster_centers_ = self.means_
         self._is_fitted = True
 
         return self
+
+    def _covs_flat(self) -> np.ndarray:
+        """Return covariances as flat C-contiguous float64 for C++ calls."""
+        return np.ascontiguousarray(self.covariances_.ravel(), dtype=np.float64)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Predict the labels for the data samples in X using trained model.
@@ -483,7 +507,13 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
             Component labels.
         """
         self._check_is_fitted()
-        return np.argmax(self.predict_proba(X), axis=1)
+        X = np.ascontiguousarray(X, dtype=np.float64)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        return np.asarray(_clu_cpp.em_predict(
+            X, self.weights_, self.means_,
+            self._covs_flat(), self.covariance_type,
+        ))
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Predict posterior probability of each component given the data.
@@ -496,16 +526,18 @@ class GaussianMixtureClusterer(DensityBasedClusterer):
         Returns
         -------
         resp : np.ndarray of shape (n_samples, n_components)
-            Posterior probability of each Gaussian component for each 
+            Posterior probability of each Gaussian component for each
             sample in X.
         """
         self._check_is_fitted()
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
-
-        resp, _ = self._e_step(X)
-        return resp
+        log_resp = np.asarray(_clu_cpp.em_log_resp(
+            X, self.weights_, self.means_,
+            self._covs_flat(), self.covariance_type,
+        ))
+        return np.exp(log_resp)
 
     def score(self, X: np.ndarray) -> float:
         """Compute the per-sample average log-likelihood of the given data X.

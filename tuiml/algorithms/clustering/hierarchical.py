@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from tuiml.base.algorithms import Clusterer, clusterer
 from tuiml.algorithms.clustering.distance import pairwise_distances
+from tuiml._cpp_ext import clustering as _clu_cpp
 
 @dataclass
 class ClusterNode:
@@ -233,79 +234,12 @@ class AgglomerativeClusterer(Clusterer):
         self : AgglomerativeClusterer
             Fitted estimator.
         """
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        n_samples = X.shape[0]
-
-        # Compute pairwise distance matrix (used as mutable cluster distance matrix)
-        n = n_samples
-        cdist = pairwise_distances(X, metric=self.distance)
-        sizes = np.ones(n, dtype=int)
-
-        # Track merge history
-        children = np.empty((n - 1, 2), dtype=np.intp)
-        distances_arr = np.empty(n - 1, dtype=np.float64)
-
-        np.fill_diagonal(cdist, np.inf)
-
-        # Pre-select linkage function to avoid per-step branching
-        linkage = self.linkage
-
-        for step in range(n - 1):
-            flat_idx = np.argmin(cdist)
-            mi, mj = divmod(int(flat_idx), n)
-            min_dist = cdist[mi, mj]
-
-            if mi > mj:
-                mi, mj = mj, mi
-
-            children[step, 0] = mi
-            children[step, 1] = mj
-            distances_arr[step] = min_dist
-
-            new_size = sizes[mi] + sizes[mj]
-
-            # Update distances from merged cluster to all others
-            d_mi = cdist[mi]
-            d_mj = cdist[mj]
-
-            if linkage == 'single':
-                new_dists = np.minimum(d_mi, d_mj)
-            elif linkage == 'complete':
-                new_dists = np.maximum(d_mi, d_mj)
-            elif linkage == 'average':
-                new_dists = (sizes[mi] * d_mi + sizes[mj] * d_mj) / new_size
-            elif linkage == 'ward':
-                sk = sizes.astype(np.float64)
-                si = float(sizes[mi])
-                sj = float(sizes[mj])
-                total = si + sj + sk
-                new_dists = np.sqrt(
-                    np.maximum(
-                        ((si + sk) * d_mi ** 2
-                         + (sj + sk) * d_mj ** 2
-                         - sk * min_dist ** 2) / total,
-                        0.0,
-                    )
-                )
-            else:
-                raise ValueError(f"Unknown linkage: {linkage}")
-
-            cdist[mi, :] = new_dists
-            cdist[:, mi] = new_dists
-            cdist[mi, mi] = np.inf
-
-            sizes[mi] = new_size
-            cdist[mj, :] = np.inf
-            cdist[:, mj] = np.inf
-
-        self.children_ = children
-        self.distances_ = distances_arr
-
-        # Assign labels by cutting the dendrogram
-        self.labels_ = self._cut_tree(n_samples)
+        labels = _clu_cpp.hierarchical_fit(X, self.n_clusters, self.linkage)
+        self.labels_ = np.asarray(labels)
         self.n_clusters_ = self.n_clusters
         self._is_fitted = True
 

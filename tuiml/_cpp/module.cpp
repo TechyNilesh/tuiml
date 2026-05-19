@@ -13,6 +13,8 @@
 #include "svm/svc.h"
 #include "svm/svr.h"
 #include "linear/sgd.h"
+#include "clustering/hierarchical.h"
+#include "clustering/em.h"
 
 namespace py = pybind11;
 
@@ -250,6 +252,38 @@ PYBIND11_MODULE(_cpp_ext, m) {
     lin.def("sgd_decision_function", &tuiml::linear::sgd_decision_function,
             py::arg("X"), py::arg("weights"), py::arg("bias"),
             "Compute linear decision function scores.");
+
+    // ── clustering submodule ──────────────────────────────────────────
+    auto clu = m.def_submodule("clustering", "Clustering algorithm kernels");
+
+    clu.def("hierarchical_fit", &tuiml::clustering::hierarchical_fit,
+            py::arg("X"), py::arg("n_clusters"), py::arg("linkage"),
+            "Agglomerative hierarchical clustering (Ward/complete/average/single).");
+
+    py::class_<tuiml::clustering::EMResult>(clu, "EMResult")
+        .def_readonly("weights",       &tuiml::clustering::EMResult::weights)
+        .def_readonly("means",         &tuiml::clustering::EMResult::means)
+        .def_readonly("covariances",   &tuiml::clustering::EMResult::covariances)
+        .def_readonly("n_iter",        &tuiml::clustering::EMResult::n_iter)
+        .def_readonly("log_likelihood",&tuiml::clustering::EMResult::log_likelihood)
+        .def_readonly("cov_type",      &tuiml::clustering::EMResult::cov_type);
+
+    clu.def("em_fit", &tuiml::clustering::em_fit,
+            py::arg("X"), py::arg("n_components"),
+            py::arg("covariance_type"), py::arg("max_iter"),
+            py::arg("tol"), py::arg("reg_covar"),
+            py::arg("n_init"), py::arg("random_seed"),
+            "Fit a Gaussian Mixture Model via EM.");
+
+    clu.def("em_predict", &tuiml::clustering::em_predict,
+            py::arg("X"), py::arg("weights"), py::arg("means"),
+            py::arg("covariances"), py::arg("covariance_type"),
+            "Predict cluster labels from fitted GMM parameters.");
+
+    clu.def("em_log_resp", &tuiml::clustering::em_log_resp,
+            py::arg("X"), py::arg("weights"), py::arg("means"),
+            py::arg("covariances"), py::arg("covariance_type"),
+            "Compute log responsibilities (n_samples, n_components).");
 
     // ── utility functions ──────────────────────────────────────────────
     m.def("get_num_threads", &tuiml::get_num_threads,
