@@ -1,9 +1,16 @@
-"""Stochastic Gradient Descent (SGD) for linear classification."""
+"""Stochastic Gradient Descent (SGD) for linear classification and regression."""
 
 import numpy as np
 from typing import Dict, List, Any, Optional
 
 from tuiml.base.algorithms import Classifier, classifier, Regressor, regressor
+from tuiml._cpp_ext import linear as _sgd_cpp
+
+# ── Loss / penalty name → int maps (must match sgd.h enums) ───────────
+_CLASSIFIER_LOSS = {"hinge": 0, "log": 1, "modified_huber": 2}
+_REGRESSOR_LOSS  = {"squared_error": 3, "huber": 4, "epsilon_insensitive": 5}
+_PENALTY         = {"none": 0, "l2": 1, "l1": 2, "elasticnet": 3}
+
 
 @classifier(tags=["linear", "sgd", "online"], version="1.0.0")
 class SGDClassifier(Classifier):
@@ -59,13 +66,13 @@ class SGDClassifier(Classifier):
         The penalty (regularization term) to be used.
     lambda_ : float, default=0.0001
         Regularization strength; must be a positive float.
-    n_epochs : int, default=500
+    n_epochs : int, default=100
         Number of passes over the training data.
     random_state : int or None, default=None
         Seed used by the random number generator.
     shuffle : bool, default=True
         Whether the training data should be shuffled after each epoch.
-    batch_size : int, default=32
+    batch_size : int, default=256
         Mini-batch size for gradient updates. Larger batches enable better
         vectorization but may converge differently than pure SGD (batch_size=1).
 
@@ -147,13 +154,13 @@ class SGDClassifier(Classifier):
             Regularization type ('l1', 'l2', 'elasticnet', or 'none').
         lambda_ : float, default=0.0001
             Regularization strength.
-        n_epochs : int, default=500
+        n_epochs : int, default=100
             Number of training epochs.
         random_state : int or None, default=None
             Random seed for reproducibility.
         shuffle : bool, default=True
             Whether to shuffle data each epoch.
-        batch_size : int, default=32
+        batch_size : int, default=256
             Mini-batch size for gradient updates.
         """
         super().__init__()
@@ -224,220 +231,6 @@ class SGDClassifier(Classifier):
             "Stochastic Gradient Descent. COMPSTAT 2010."
         ]
 
-    def _hinge_loss_gradient(self, y: int, score: float) -> float:
-        """Compute gradient for hinge loss.
-
-        Parameters
-        ----------
-        y : int
-            True label in {-1, 1}.
-        score : float
-            Decision function value :math:`w^T x + b`.
-
-        Returns
-        -------
-        gradient : float
-            Gradient of the hinge loss with respect to the score.
-        """
-        if y * score < 1:
-            return -y
-        return 0.0
-
-    def _log_loss_gradient(self, y: int, score: float) -> float:
-        """Compute gradient for logistic loss.
-
-        Parameters
-        ----------
-        y : int
-            True label in {-1, 1}.
-        score : float
-            Decision function value :math:`w^T x + b`.
-
-        Returns
-        -------
-        gradient : float
-            Gradient of the log loss with respect to the score.
-        """
-        exp_yx = np.exp(-y * np.clip(score, -500, 500))
-        return -y * exp_yx / (1 + exp_yx)
-
-    def _modified_huber_gradient(self, y: int, score: float) -> float:
-        """Compute gradient for modified Huber loss.
-
-        Parameters
-        ----------
-        y : int
-            True label in {-1, 1}.
-        score : float
-            Decision function value :math:`w^T x + b`.
-
-        Returns
-        -------
-        gradient : float
-            Gradient of the modified Huber loss with respect to the score.
-        """
-        margin = y * score
-        if margin >= 1:
-            return 0.0
-        elif margin <= -1:
-            return -4 * y
-        else:
-            return -2 * y * (1 - margin)
-
-    def _get_loss_gradient(self, y: int, score: float) -> float:
-        """Get gradient based on the configured loss function.
-
-        Parameters
-        ----------
-        y : int
-            True label in {-1, 1}.
-        score : float
-            Decision function value.
-
-        Returns
-        -------
-        gradient : float
-            Gradient of the selected loss function.
-        """
-        if self.loss == 'hinge':
-            return self._hinge_loss_gradient(y, score)
-        elif self.loss == 'log':
-            return self._log_loss_gradient(y, score)
-        elif self.loss == 'modified_huber':
-            return self._modified_huber_gradient(y, score)
-        else:
-            raise ValueError(f"Unknown loss: {self.loss}")
-
-    def _regularization_gradient(self, weights: np.ndarray) -> np.ndarray:
-        """Compute regularization gradient.
-
-        Parameters
-        ----------
-        weights : np.ndarray
-            Current weight vector.
-
-        Returns
-        -------
-        grad : np.ndarray
-            Regularization gradient of the same shape as weights.
-        """
-        if self.regularization == 'l2':
-            return self.lambda_ * weights
-        elif self.regularization == 'l1':
-            return self.lambda_ * np.sign(weights)
-        elif self.regularization == 'elasticnet':
-            return self.lambda_ * (0.5 * weights + 0.5 * np.sign(weights))
-        return np.zeros_like(weights)
-
-    def _fit_binary(self, X: np.ndarray, y: np.ndarray) -> tuple:
-        """Fit binary classifier using mini-batch SGD.
-
-        Parameters
-        ----------
-        X : np.ndarray of shape (n_samples, n_features)
-            Training features.
-        y : np.ndarray of shape (n_samples,)
-            Binary target labels (0 or 1).
-
-        Returns
-        -------
-        weights : np.ndarray of shape (n_features,)
-            Learned weight vector.
-        bias : float
-            Learned bias term.
-        """
-        n_samples, n_features = X.shape
-        rng = np.random.RandomState(self.random_state)
-
-        weights = np.zeros(n_features)
-        bias = 0.0
-
-        # Convert labels to {-1, 1}
-        y_binary = 2 * y - 1
-
-        batch_size = min(self.batch_size, n_samples)
-        tol = 1e-3
-        best_loss = np.inf
-        no_improve = 0
-
-        for epoch in range(self.n_epochs):
-            # Shuffle if requested
-            if self.shuffle:
-                indices = rng.permutation(n_samples)
-            else:
-                indices = np.arange(n_samples)
-
-            # Learning rate schedule (inverse scaling)
-            lr = self.learning_rate / (1 + epoch * 0.0001)
-
-            # Process in mini-batches for vectorized computation
-            for batch_start in range(0, n_samples, batch_size):
-                batch_end = min(batch_start + batch_size, n_samples)
-                batch_idx = indices[batch_start:batch_end]
-
-                X_batch = X[batch_idx]
-                y_batch = y_binary[batch_idx]
-
-                # Compute scores for entire batch (vectorized)
-                scores = X_batch @ weights + bias
-
-                # Compute gradients for entire batch (vectorized)
-                loss_grads = self._get_batch_loss_gradient(y_batch, scores)
-
-                # Average gradient over batch
-                grad_w = (X_batch.T @ loss_grads) / len(batch_idx)
-                grad_b = np.mean(loss_grads)
-
-                # Update weights with regularization
-                weights -= lr * (grad_w + self._regularization_gradient(weights))
-                bias -= lr * grad_b
-
-            # Early stopping
-            all_scores = X @ weights + bias
-            cur_loss = np.mean(np.maximum(0, 1 - y_binary * all_scores))
-            if best_loss - cur_loss < tol:
-                no_improve += 1
-                if no_improve >= 3:
-                    break
-            else:
-                no_improve = 0
-            best_loss = min(best_loss, cur_loss)
-
-        return weights, bias
-
-    def _get_batch_loss_gradient(self, y: np.ndarray, scores: np.ndarray) -> np.ndarray:
-        """Compute vectorized gradient for a batch of samples.
-
-        Parameters
-        ----------
-        y : np.ndarray of shape (batch_size,)
-            True labels in {-1, 1}.
-        scores : np.ndarray of shape (batch_size,)
-            Decision function values for the batch.
-
-        Returns
-        -------
-        grads : np.ndarray of shape (batch_size,)
-            Per-sample loss gradients.
-        """
-        if self.loss == 'hinge':
-            # Hinge loss: gradient is -y where y*score < 1, else 0
-            grads = np.where(y * scores < 1, -y, 0.0)
-        elif self.loss == 'log':
-            # Log loss: gradient is -y * exp(-y*score) / (1 + exp(-y*score))
-            exp_yx = np.exp(-y * np.clip(scores, -500, 500))
-            grads = -y * exp_yx / (1 + exp_yx)
-        elif self.loss == 'modified_huber':
-            # Modified Huber loss
-            margin = y * scores
-            grads = np.where(
-                margin >= 1, 0.0,
-                np.where(margin <= -1, -4 * y, -2 * y * (1 - margin))
-            )
-        else:
-            raise ValueError(f"Unknown loss: {self.loss}")
-        return grads
-
     def fit(self, X: np.ndarray, y: np.ndarray) -> "SGDClassifier":
         """Fit the SGD classifier.
 
@@ -453,32 +246,49 @@ class SGDClassifier(Classifier):
         self : SGDClassifier
             Fitted classifier.
         """
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         y = np.asarray(y)
-
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
         self.classes_ = np.unique(y)
         self._n_classes = len(self.classes_)
 
-        # Convert y to indices
         class_to_idx = {c: i for i, c in enumerate(self.classes_)}
-        y_idx = np.array([class_to_idx[c] for c in y])
+        y_idx = np.array([class_to_idx[c] for c in y], dtype=np.int32)
 
+        n_out = 1 if self._n_classes == 2 else self._n_classes
         n_features = X.shape[1]
 
-        if self._n_classes == 2:
-            # Binary classification
-            self.weights_, self.bias_ = self._fit_binary(X, y_idx)
-        else:
-            # Multiclass: one-vs-all
-            self.weights_ = np.zeros((self._n_classes, n_features))
-            self.bias_ = np.zeros(self._n_classes)
+        result = _sgd_cpp.sgd_fit_classifier(
+            X, y_idx,
+            n_classes    = self._n_classes,
+            loss_type    = _CLASSIFIER_LOSS[self.loss],
+            penalty_type = _PENALTY[self.regularization],
+            alpha        = self.lambda_,
+            l1_ratio     = 0.5,
+            eta0         = self.learning_rate,
+            lr_schedule  = "invscaling",
+            power_t      = 0.25,
+            n_epochs     = self.n_epochs,
+            batch_size   = self.batch_size,
+            tol          = 1e-3,
+            patience     = 3,
+            shuffle      = self.shuffle,
+            random_seed  = self.random_state if self.random_state is not None else 0,
+            weights_init = np.empty(0),
+            bias_init    = np.empty(0),
+        )
 
-            for k in range(self._n_classes):
-                y_binary = (y_idx == k).astype(int)
-                self.weights_[k], self.bias_[k] = self._fit_binary(X, y_binary)
+        W = np.array(result.weights)
+        b = np.array(result.bias)
+
+        if self._n_classes == 2:
+            self.weights_ = W  # shape (n_features,)
+            self.bias_ = b[0]
+        else:
+            self.weights_ = W.reshape(n_out, n_features)
+            self.bias_ = b
 
         self._is_fitted = True
         return self
@@ -494,8 +304,7 @@ class SGDClassifier(Classifier):
         Returns
         -------
         scores : np.ndarray
-            Decision function scores of shape (n_samples,) for binary
-            or (n_samples, n_classes) for multiclass.
+            Decision function scores.
         """
         if self._n_classes == 2:
             return X @ self.weights_ + self.bias_
@@ -517,7 +326,6 @@ class SGDClassifier(Classifier):
         """
         self._check_is_fitted()
         X = np.asarray(X, dtype=float)
-
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
@@ -545,18 +353,15 @@ class SGDClassifier(Classifier):
         """
         self._check_is_fitted()
         X = np.asarray(X, dtype=float)
-
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
         scores = self._score(X)
 
         if self._n_classes == 2:
-            # Sigmoid for binary
             prob_pos = 1 / (1 + np.exp(-np.clip(scores, -500, 500)))
             return np.column_stack([1 - prob_pos, prob_pos])
         else:
-            # Softmax for multiclass
             exp_scores = np.exp(scores - np.max(scores, axis=1, keepdims=True))
             return exp_scores / (np.sum(exp_scores, axis=1, keepdims=True) + 1e-10)
 
@@ -578,31 +383,49 @@ class SGDClassifier(Classifier):
         if not self._is_fitted:
             return self.fit(X, y)
 
-        X = np.asarray(X, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
         y = np.asarray(y)
-
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
         class_to_idx = {c: i for i, c in enumerate(self.classes_)}
-        y_idx = np.array([class_to_idx[c] for c in y])
+        y_idx = np.array([class_to_idx[c] for c in y], dtype=np.int32)
 
-        # Single epoch update
-        saved_epochs = self.n_epochs
-        self.n_epochs = 1
+        n_out = 1 if self._n_classes == 2 else self._n_classes
+        n_features = X.shape[1]
 
+        w_init = self.weights_.ravel().astype(np.float64)
+        b_init = np.atleast_1d(self.bias_).astype(np.float64)
+
+        result = _sgd_cpp.sgd_fit_classifier(
+            X, y_idx,
+            n_classes    = self._n_classes,
+            loss_type    = _CLASSIFIER_LOSS[self.loss],
+            penalty_type = _PENALTY[self.regularization],
+            alpha        = self.lambda_,
+            l1_ratio     = 0.5,
+            eta0         = self.learning_rate,
+            lr_schedule  = "invscaling",
+            power_t      = 0.25,
+            n_epochs     = 1,
+            batch_size   = self.batch_size,
+            tol          = 1e-3,
+            patience     = 3,
+            shuffle      = self.shuffle,
+            random_seed  = self.random_state if self.random_state is not None else 0,
+            weights_init = w_init,
+            bias_init    = b_init,
+        )
+
+        W = np.array(result.weights)
+        b = np.array(result.bias)
         if self._n_classes == 2:
-            w, b = self._fit_binary(X, y_idx)
-            self.weights_ = 0.5 * self.weights_ + 0.5 * w
-            self.bias_ = 0.5 * self.bias_ + 0.5 * b
+            self.weights_ = W
+            self.bias_ = b[0]
         else:
-            for k in range(self._n_classes):
-                y_binary = (y_idx == k).astype(int)
-                w, b = self._fit_binary(X, y_binary)
-                self.weights_[k] = 0.5 * self.weights_[k] + 0.5 * w
-                self.bias_[k] = 0.5 * self.bias_[k] + 0.5 * b
+            self.weights_ = W.reshape(n_out, n_features)
+            self.bias_ = b
 
-        self.n_epochs = saved_epochs
         return self
 
     def __repr__(self) -> str:
@@ -674,7 +497,7 @@ class SGDRegressor(Regressor):
         The penalty (regularization term) to be used.
     lambda_ : float, default=0.0001
         Regularization strength; must be a positive float.
-    n_epochs : int, default=500
+    n_epochs : int, default=100
         Number of passes over the training data.
     epsilon : float, default=0.1
         The epsilon threshold for the Huber loss. Residuals smaller than
@@ -684,7 +507,7 @@ class SGDRegressor(Regressor):
         Seed used by the random number generator.
     shuffle : bool, default=True
         Whether the training data should be shuffled after each epoch.
-    batch_size : int, default=32
+    batch_size : int, default=256
         Mini-batch size for gradient updates. Larger batches enable better
         vectorization but may converge differently than pure SGD (batch_size=1).
 
@@ -767,7 +590,7 @@ class SGDRegressor(Regressor):
             Regularization type ('l1', 'l2', 'elasticnet', or 'none').
         lambda_ : float, default=0.0001
             Regularization strength.
-        n_epochs : int, default=500
+        n_epochs : int, default=100
             Number of training epochs.
         epsilon : float, default=0.1
             Epsilon threshold for Huber loss.
@@ -775,7 +598,7 @@ class SGDRegressor(Regressor):
             Random seed for reproducibility.
         shuffle : bool, default=True
             Whether to shuffle data each epoch.
-        batch_size : int, default=32
+        batch_size : int, default=256
             Mini-batch size for gradient updates.
         """
         super().__init__()
@@ -838,52 +661,6 @@ class SGDRegressor(Regressor):
     def get_capabilities(cls) -> List[str]:
         return ["numeric", "regression"]
 
-    def _regularization_gradient(self, weights: np.ndarray) -> np.ndarray:
-        """Compute regularization gradient.
-
-        Parameters
-        ----------
-        weights : np.ndarray
-            Current weight vector.
-
-        Returns
-        -------
-        grad : np.ndarray
-            Regularization gradient of the same shape as weights.
-        """
-        if self.regularization == 'l2':
-            return self.lambda_ * weights
-        elif self.regularization == 'l1':
-            return self.lambda_ * np.sign(weights)
-        elif self.regularization == 'elasticnet':
-            return self.lambda_ * (0.5 * weights + 0.5 * np.sign(weights))
-        return np.zeros_like(weights)
-
-    def _get_batch_loss_gradient(self, y: np.ndarray, scores: np.ndarray) -> np.ndarray:
-        """Compute vectorized loss gradient for a batch of samples.
-
-        Parameters
-        ----------
-        y : np.ndarray of shape (batch_size,)
-            True target values.
-        scores : np.ndarray of shape (batch_size,)
-            Predicted values for the batch.
-
-        Returns
-        -------
-        grads : np.ndarray of shape (batch_size,)
-            Per-sample loss gradients.
-        """
-        diff = scores - y
-        if self.loss == 'squared_error':
-            return diff
-        elif self.loss == 'huber':
-            return np.where(np.abs(diff) <= self.epsilon,
-                            diff,
-                            self.epsilon * np.sign(diff))
-        else:
-            raise ValueError(f"Unknown loss: {self.loss}")
-
     def fit(self, X: np.ndarray, y: np.ndarray) -> "SGDRegressor":
         """Fit the SGD regressor.
 
@@ -899,58 +676,33 @@ class SGDRegressor(Regressor):
         self : SGDRegressor
             Fitted regressor.
         """
-        X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float)
-
+        X = np.ascontiguousarray(X, dtype=np.float64)
+        y = np.ascontiguousarray(y, dtype=np.float64)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        n_samples, n_features = X.shape
-        rng = np.random.RandomState(self.random_state)
+        result = _sgd_cpp.sgd_fit_regressor(
+            X, y,
+            loss_type    = _REGRESSOR_LOSS[self.loss],
+            penalty_type = _PENALTY[self.regularization],
+            alpha        = self.lambda_,
+            l1_ratio     = 0.5,
+            eta0         = self.learning_rate,
+            lr_schedule  = "invscaling",
+            power_t      = 0.25,
+            epsilon      = self.epsilon,
+            n_epochs     = self.n_epochs,
+            batch_size   = self.batch_size,
+            tol          = 1e-3,
+            patience     = 3,
+            shuffle      = self.shuffle,
+            random_seed  = self.random_state if self.random_state is not None else 0,
+            weights_init = np.empty(0),
+            bias_init    = np.empty(0),
+        )
 
-        self.weights_ = np.zeros(n_features)
-        self.bias_ = 0.0
-
-        batch_size = min(self.batch_size, n_samples)
-        tol = 1e-3
-        prev_loss = np.inf
-        no_improve = 0
-
-        for epoch in range(self.n_epochs):
-            if self.shuffle:
-                indices = rng.permutation(n_samples)
-            else:
-                indices = np.arange(n_samples)
-
-            lr = self.learning_rate / (1 + epoch * 0.0001)
-
-            for batch_start in range(0, n_samples, batch_size):
-                batch_end = min(batch_start + batch_size, n_samples)
-                batch_idx = indices[batch_start:batch_end]
-
-                X_batch = X[batch_idx]
-                y_batch = y[batch_idx]
-
-                scores = X_batch @ self.weights_ + self.bias_
-                loss_grads = self._get_batch_loss_gradient(y_batch, scores)
-
-                grad_w = (X_batch.T @ loss_grads) / len(batch_idx)
-                grad_b = np.mean(loss_grads)
-
-                self.weights_ -= lr * (grad_w + self._regularization_gradient(self.weights_))
-                self.bias_ -= lr * grad_b
-
-            # Early stopping: check every epoch, stop after 3 non-improving epochs
-            preds = X @ self.weights_ + self.bias_
-            cur_loss = np.mean((y - preds) ** 2)
-            if prev_loss - cur_loss < tol:
-                no_improve += 1
-                if no_improve >= 3:
-                    break
-            else:
-                no_improve = 0
-            prev_loss = min(prev_loss, cur_loss)
-
+        self.weights_ = np.array(result.weights)
+        self.bias_ = result.bias[0]
         self._is_fitted = True
         return self
 
@@ -991,17 +743,33 @@ class SGDRegressor(Regressor):
         if not self._is_fitted:
             return self.fit(X, y)
 
-        X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float)
+        X = np.ascontiguousarray(X, dtype=np.float64)
+        y = np.ascontiguousarray(y, dtype=np.float64)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
-        # Single epoch update
-        saved_epochs = self.n_epochs
-        self.n_epochs = 1
-        self.fit(X, y)
-        self.n_epochs = saved_epochs
+        result = _sgd_cpp.sgd_fit_regressor(
+            X, y,
+            loss_type    = _REGRESSOR_LOSS[self.loss],
+            penalty_type = _PENALTY[self.regularization],
+            alpha        = self.lambda_,
+            l1_ratio     = 0.5,
+            eta0         = self.learning_rate,
+            lr_schedule  = "invscaling",
+            power_t      = 0.25,
+            epsilon      = self.epsilon,
+            n_epochs     = 1,
+            batch_size   = self.batch_size,
+            tol          = 1e-3,
+            patience     = 3,
+            shuffle      = self.shuffle,
+            random_seed  = self.random_state if self.random_state is not None else 0,
+            weights_init = self.weights_.astype(np.float64),
+            bias_init    = np.array([self.bias_], dtype=np.float64),
+        )
 
+        self.weights_ = np.array(result.weights)
+        self.bias_ = result.bias[0]
         return self
 
     def __repr__(self) -> str:

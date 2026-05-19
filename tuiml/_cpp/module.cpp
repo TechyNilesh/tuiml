@@ -12,6 +12,7 @@
 #include "common/parallel.h"
 #include "svm/svc.h"
 #include "svm/svr.h"
+#include "linear/sgd.h"
 
 namespace py = pybind11;
 
@@ -197,6 +198,58 @@ PYBIND11_MODULE(_cpp_ext, m) {
     svm.def("svr_predict_precomputed", &tuiml::svm::svr_predict_precomputed,
             py::arg("model"), py::arg("K_test"),
             "Predict values using a precomputed kernel test matrix.");
+
+    // ── linear submodule ──────────────────────────────────────────────
+    auto lin = m.def_submodule("linear", "Linear model kernels (SGD)");
+
+    py::class_<tuiml::linear::SGDResult>(lin, "SGDResult")
+        .def_readonly("weights", &tuiml::linear::SGDResult::weights)
+        .def_readonly("bias",    &tuiml::linear::SGDResult::bias)
+        .def_readonly("n_iter",  &tuiml::linear::SGDResult::n_iter);
+
+    lin.def("sgd_fit_classifier", &tuiml::linear::sgd_fit_classifier,
+            py::arg("X"), py::arg("y"),
+            py::arg("n_classes"),
+            py::arg("loss_type"),
+            py::arg("penalty_type"),
+            py::arg("alpha"),
+            py::arg("l1_ratio"),
+            py::arg("eta0"),
+            py::arg("lr_schedule"),
+            py::arg("power_t"),
+            py::arg("n_epochs"),
+            py::arg("batch_size"),
+            py::arg("tol"),
+            py::arg("patience"),
+            py::arg("shuffle"),
+            py::arg("random_seed"),
+            py::arg("weights_init"),
+            py::arg("bias_init"),
+            "Train an SGD classifier (OvR for multiclass).");
+
+    lin.def("sgd_fit_regressor", &tuiml::linear::sgd_fit_regressor,
+            py::arg("X"), py::arg("y"),
+            py::arg("loss_type"),
+            py::arg("penalty_type"),
+            py::arg("alpha"),
+            py::arg("l1_ratio"),
+            py::arg("eta0"),
+            py::arg("lr_schedule"),
+            py::arg("power_t"),
+            py::arg("epsilon"),
+            py::arg("n_epochs"),
+            py::arg("batch_size"),
+            py::arg("tol"),
+            py::arg("patience"),
+            py::arg("shuffle"),
+            py::arg("random_seed"),
+            py::arg("weights_init"),
+            py::arg("bias_init"),
+            "Train an SGD regressor.");
+
+    lin.def("sgd_decision_function", &tuiml::linear::sgd_decision_function,
+            py::arg("X"), py::arg("weights"), py::arg("bias"),
+            "Compute linear decision function scores.");
 
     // ── utility functions ──────────────────────────────────────────────
     m.def("get_num_threads", &tuiml::get_num_threads,

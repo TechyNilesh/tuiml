@@ -24,6 +24,7 @@ pybind11_add_module(_cpp_ext
     tuiml/_cpp/svm/smo_solver.cpp
     tuiml/_cpp/svm/svc.cpp
     tuiml/_cpp/svm/svr.cpp
+    tuiml/_cpp/linear/sgd.cpp
 )
 
 target_include_directories(_cpp_ext PRIVATE
