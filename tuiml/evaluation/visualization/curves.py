@@ -18,24 +18,12 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 from ._style import get_colors, setup_figure, style_axis, SEMANTIC_COLORS
+from tuiml.evaluation.metrics.classification import _binary_roc_curve, auc
 
 def _roc_curve_binary(y_true_bin: np.ndarray, y_score: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
     """Compute (fpr, tpr, auc) for a single binary-labelled vector y_true_bin in {0,1}."""
-    thresholds = np.sort(np.unique(y_score))[::-1]
-    tpr_list, fpr_list = [0.0], [0.0]
-    for thresh in thresholds:
-        y_pred = (y_score >= thresh).astype(int)
-        tp = np.sum((y_pred == 1) & (y_true_bin == 1))
-        fp = np.sum((y_pred == 1) & (y_true_bin == 0))
-        tn = np.sum((y_pred == 0) & (y_true_bin == 0))
-        fn = np.sum((y_pred == 0) & (y_true_bin == 1))
-        tpr_list.append(tp / (tp + fn) if (tp + fn) > 0 else 0.0)
-        fpr_list.append(fp / (fp + tn) if (fp + tn) > 0 else 0.0)
-    tpr_list.append(1.0); fpr_list.append(1.0)
-    fpr = np.array(fpr_list); tpr = np.array(tpr_list)
-    order = np.argsort(fpr)
-    fpr, tpr = fpr[order], tpr[order]
-    return fpr, tpr, float(_trapz(tpr, fpr))
+    fpr, tpr, _ = _binary_roc_curve(y_true_bin, y_score, pos_label=1)
+    return fpr, tpr, auc(fpr, tpr)
 
 
 def plot_roc_curve(
@@ -68,12 +56,24 @@ def plot_roc_curve(
 
     y_true = np.asarray(y_true)
     y_score = np.asarray(y_score)
+    unique_labels = np.unique(y_true)
+
+    if y_score.ndim == 1 and len(unique_labels) > 2:
+        raise ValueError(
+            "Multiclass ROC curves require class probabilities/scores with "
+            "shape (n_samples, n_classes). A 1-D vector, such as predicted "
+            "class labels, cannot produce meaningful ROC curves."
+        )
 
     # ── Multiclass path (one-vs-rest) ────────────────────────────────
     if y_score.ndim == 2 and y_score.shape[1] > 2:
         if classes is None:
-            classes = list(np.unique(y_true))
+            classes = list(unique_labels)
         n_classes = y_score.shape[1]
+        if len(classes) != n_classes:
+            raise ValueError(
+                "Length of classes must match the number of y_score columns"
+            )
         colors = get_colors(n_classes)
 
         fig, ax = setup_figure(figsize=figsize)
@@ -91,7 +91,7 @@ def plot_roc_curve(
             mean_tpr += np.interp(all_fpr, fpr_k, tpr_k)
 
         mean_tpr /= n_classes
-        macro_auc = float(_trapz(mean_tpr, all_fpr))
+        macro_auc = auc(all_fpr, mean_tpr)
         ax.plot(all_fpr, mean_tpr, lw=3.0, linestyle=':',
                 color=SEMANTIC_COLORS.get('primary', 'k'),
                 label=f'macro-avg (AUC = {macro_auc:.3f})')
@@ -120,14 +120,14 @@ def plot_roc_curve(
     else:
         y_true_bin = y_true.astype(int)
 
-    fpr, tpr, auc = _roc_curve_binary(y_true_bin, y_score)
+    fpr, tpr, auc_score = _roc_curve_binary(y_true_bin, y_score)
 
     colors = get_colors(2)
     fig, ax = setup_figure(figsize=figsize)
     if label is None:
-        label = f'ROC (AUC = {auc:.3f})' if show_auc else 'ROC'
+        label = f'ROC (AUC = {auc_score:.3f})' if show_auc else 'ROC'
     elif show_auc:
-        label = f'{label} (AUC = {auc:.3f})'
+        label = f'{label} (AUC = {auc_score:.3f})'
 
     ax.plot(fpr, tpr, lw=3.0, label=label, color=colors[0])
     ax.plot([0, 1], [0, 1], '--', lw=2.0, label='Random', color=SEMANTIC_COLORS['neutral'])
@@ -139,7 +139,7 @@ def plot_roc_curve(
     if save_path:
         plt.savefig(save_path, format='png', bbox_inches='tight', dpi=300)
     plt.show()
-    return fpr, tpr, auc
+    return fpr, tpr, auc_score
 
 def plot_pr_curve(
     y_true: np.ndarray,

@@ -237,20 +237,90 @@ def cohen_kappa_score(y_true, y_pred):
     return float((po - pe) / (1 - pe)) if pe < 1 else 0.0
 
 # ROC AUC
-def roc_auc_score(y_true, y_score, average='macro'):
-    """Compute AUC. Equivalent to Weka's Evaluation.areaUnderROC(classIndex)."""
-    y_true = np.asarray(y_true); y_score = np.asarray(y_score)
-    # Simple binary AUC for now
+def _binary_roc_curve(y_true, y_score, pos_label=1):
+    """Compute binary ROC coordinates for score thresholds."""
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score, dtype=float)
+
+    if y_score.ndim != 1:
+        raise ValueError("y_score must be a 1-D score vector for binary ROC")
+    if len(y_true) != len(y_score):
+        raise ValueError("y_true and y_score must have the same length")
+
+    y_true_bin = y_true == pos_label
+    n_pos = np.sum(y_true_bin)
+    n_neg = len(y_true_bin) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        raise ValueError("ROC AUC is undefined when only one class is present")
+
+    order = np.argsort(y_score, kind="mergesort")[::-1]
+    y_score = y_score[order]
+    y_true_bin = y_true_bin[order]
+
+    distinct = np.where(np.diff(y_score))[0]
+    threshold_idxs = np.r_[distinct, y_true_bin.size - 1]
+
+    tps = np.cumsum(y_true_bin)[threshold_idxs]
+    fps = 1 + threshold_idxs - tps
+
+    tps = np.r_[0, tps]
+    fps = np.r_[0, fps]
+    thresholds = np.r_[np.inf, y_score[threshold_idxs]]
+
+    tpr = tps / n_pos
+    fpr = fps / n_neg
+    return fpr.astype(float), tpr.astype(float), thresholds
+
+
+def roc_auc_score(y_true, y_score, average='macro', labels=None):
+    """Compute ROC AUC.
+
+    Binary input accepts a 1-D score vector for the positive class. Multiclass
+    input accepts a probability/score matrix of shape
+    ``(n_samples, n_classes)`` and computes one-vs-rest AUC for each class.
+    """
+    y_true = np.asarray(y_true)
+    y_score = np.asarray(y_score)
+
+    if labels is None:
+        labels = np.unique(y_true)
+    labels = np.asarray(labels)
+
     if y_score.ndim == 1:
-        desc_score_indices = np.argsort(y_score)[::-1]
-        y_score = y_score[desc_score_indices]
-        y_true = y_true[desc_score_indices]
-        tps = np.cumsum(y_true == 1)
-        fps = np.cumsum(y_true == 0)
-        tpr = tps / tps[-1] if tps[-1] > 0 else np.zeros_like(tps)
-        fpr = fps / fps[-1] if fps[-1] > 0 else np.zeros_like(fps)
-        return float(np.trapezoid(tpr, fpr))
-    return 0.0
+        if len(labels) > 2:
+            raise ValueError(
+                "Multiclass ROC AUC requires y_score with shape "
+                "(n_samples, n_classes), not hard labels or a 1-D score vector"
+            )
+        pos_label = labels[-1] if len(labels) == 2 else 1
+        fpr, tpr, _ = _binary_roc_curve(y_true, y_score, pos_label=pos_label)
+        return auc(fpr, tpr)
+
+    if y_score.ndim != 2:
+        raise ValueError("y_score must be 1-D or 2-D")
+    if y_score.shape[0] != len(y_true):
+        raise ValueError("y_true and y_score must have the same number of rows")
+    if y_score.shape[1] != len(labels):
+        raise ValueError("Number of score columns must match number of labels")
+
+    scores = []
+    support = []
+    for i, label in enumerate(labels):
+        y_true_bin = (y_true == label).astype(int)
+        fpr, tpr, _ = _binary_roc_curve(y_true_bin, y_score[:, i], pos_label=1)
+        scores.append(auc(fpr, tpr))
+        support.append(np.sum(y_true == label))
+
+    scores = np.asarray(scores, dtype=float)
+    support = np.asarray(support, dtype=float)
+
+    if average is None:
+        return scores
+    if average == 'macro':
+        return float(np.mean(scores))
+    if average == 'weighted':
+        return float(np.sum(scores * support) / np.sum(support))
+    raise ValueError(f"Unknown average: {average}")
 
 def precision_recall_fscore_support(y_true, y_pred, beta=1.0, labels=None, pos_label=1, average=None, zero_division=0.0):
     """Compute precision, recall, F-measure and support."""
@@ -316,14 +386,7 @@ def num_false_negatives(y_true, y_pred, pos_label=1):
 
 def roc_curve(y_true, y_score, pos_label=1):
     """Compute ROC curve."""
-    y_true = np.asarray(y_true); y_score = np.asarray(y_score)
-    desc = np.argsort(y_score)[::-1]
-    y_score = y_score[desc]; y_true = y_true[desc]
-    tps = np.cumsum(y_true == pos_label)
-    fps = np.cumsum(y_true != pos_label)
-    tpr = tps / tps[-1] if tps[-1] > 0 else np.zeros_like(tps)
-    fpr = fps / fps[-1] if fps[-1] > 0 else np.zeros_like(fps)
-    return fpr, tpr, y_score
+    return _binary_roc_curve(y_true, y_score, pos_label=pos_label)
 
 def auc(x, y):
     """Compute AUC using trapezoidal rule."""

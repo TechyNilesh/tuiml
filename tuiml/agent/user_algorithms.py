@@ -946,17 +946,19 @@ def load_all() -> Dict[str, Any]:
     for name_dir in sorted(USER_ALGS_DIR.iterdir()):
         if not name_dir.is_dir():
             continue
-        for ver_dir in sorted(name_dir.iterdir()):
-            if not ver_dir.is_dir():
-                continue
-            alg_file = ver_dir / "algorithm.py"
-            if not alg_file.exists():
-                continue
-            try:
-                cls, kind = _import_and_register(alg_file, name_dir.name, ver_dir.name)
-                loaded.append({"name": cls.__name__, "kind": kind, "version": ver_dir.name})
-            except Exception as e:  # keep going on partial failures
-                errors.append({"path": str(alg_file), "error": str(e)})
+        ver_dirs = sorted(
+            (d for d in name_dir.iterdir() if d.is_dir() and (d / "algorithm.py").exists()),
+            key=lambda d: d.name,
+        )
+        if not ver_dirs:
+            continue
+        ver_dir = ver_dirs[-1]  # only load the latest version
+        alg_file = ver_dir / "algorithm.py"
+        try:
+            cls, kind = _import_and_register(alg_file, name_dir.name, ver_dir.name)
+            loaded.append({"name": cls.__name__, "kind": kind, "version": ver_dir.name})
+        except Exception as e:  # keep going on partial failures
+            errors.append({"path": str(alg_file), "error": str(e)})
 
     return {"status": "success", "loaded": len(loaded),
             "algorithms": loaded, "errors": errors}

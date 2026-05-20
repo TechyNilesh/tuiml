@@ -769,7 +769,7 @@ WORKFLOW_TOOLS = {
                     "description": (
                         "Type of plot to generate:\n"
                         "- confusion_matrix: Heatmap of predicted vs actual classes (requires model_id + data + target)\n"
-                        "- roc_curve: ROC curve with AUC for binary classifiers (requires model_id + data + target)\n"
+                        "- roc_curve: ROC curve with AUC for binary or multiclass classifiers (requires model_id + data + target)\n"
                         "- pr_curve: Precision-Recall curve with AP for binary classifiers (requires model_id + data + target)\n"
                         "- learning_curve: Training vs validation score over dataset sizes (requires algorithm + data + target)\n"
                         "- tree: Decision tree structure visualization (requires model_id)\n"
